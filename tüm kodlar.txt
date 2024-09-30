@@ -1,0 +1,3326 @@
+(API KLASÖRÜNDEKILER)
+################ 1)LOGIN.PHP ##################
+
+<?php
+
+session_start();
+require '../pages/functions.php';   
+require '../pages/vt.php';
+
+// Fehlerberichterstattung aktivieren
+ini_set('display_errors', 1);
+error_reporting(E_ALL);
+
+if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+    $email = $_POST['email'] ?? '';
+    $password = $_POST['password'] ?? '';
+
+    $stmt = $dbh->prepare("SELECT * FROM users WHERE email = :email LIMIT 1");
+    $stmt->bindParam(':email', $email);
+    $stmt->execute();
+   
+    if ($stmt->rowCount() > 0) {
+        $user = $stmt->fetch(PDO::FETCH_ASSOC);
+    
+        if (password_verify($password, $user['password'])) {
+            $token = generateToken();
+            $stmt = $dbh->prepare("UPDATE users SET userkey = :token WHERE user_id = :id");
+            $stmt->execute([':token' => $token, ':id' => $user['user_id']]);
+            
+            // Benutzeraktivitäten speichern
+            $stmt = $dbh->prepare("INSERT INTO user_activity_logs (user_id, activity_type, activity_details) VALUES (:user_id, 'login', 'Benutzer hat sich eingeloggt')");
+            $stmt->execute([':user_id' => $user['user_id']]);
+
+            setcookie('user_token', $token, time() + (86400 * 30), "/"); // 30 Tage gültig
+            $_SESSION['user_id'] = $user['user_id'];
+
+            $_SESSION['last_activity'] = time(); 
+            
+            echo json_encode(['status' => 'success', 'redirect' => '../pages/admin.php']);
+            exit();
+        } else {
+            echo json_encode(['status' => 'error', 'message' => 'Falsche E-Mail-Adresse oder falsches Passwort.']);
+            exit();
+        }
+    } else {
+        echo json_encode(['status' => 'error', 'message' => 'Falsche E-Mail-Adresse oder falsches Passwort.']);
+        exit();
+    }
+}
+
+?>
+
+
+
+################ 2)RESET_PASSWORD.PHP ##################
+
+
+<?php
+require '../pages/functions.php'; 
+
+if (isset($_GET['token'])) {
+    $token = $_GET['token'];
+
+    $stmt = $dbh->prepare("SELECT email FROM password_resets WHERE token = :token AND expires_at > NOW()");
+    $stmt->bindParam(':token', $token);
+    $stmt->execute();
+    $email = $stmt->fetchColumn();
+
+    if ($email) {
+        if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+            $new_password = $_POST['new_password'];
+            $confirm_password = $_POST['confirm_password'];
+
+            if ($new_password === $confirm_password) {
+                if (isStrongPassword($new_password)) {
+                    $hashed_password = password_hash($new_password, PASSWORD_DEFAULT);
+
+                    $stmt = $dbh->prepare("UPDATE users SET password = :password WHERE email = :email");
+                    $stmt->bindParam(':password', $hashed_password);
+                    $stmt->bindParam(':email', $email);
+                    $stmt->execute();
+
+                    $stmt = $dbh->prepare("DELETE FROM password_resets WHERE email = :email");
+                    $stmt->bindParam(':email', $email);
+                    $stmt->execute();
+
+                    $stmt = $dbh->prepare("INSERT INTO user_activity_logs (user_id, activity_type, activity_details) VALUES ((SELECT user_id FROM users WHERE email = :email), 'password_reset', 'Password was reset')");
+                    $stmt->bindParam(':email', $email);
+                    $stmt->execute();
+
+                    header("Location: ../pages/user_login.php");
+                    exit();
+                } else {
+                    echo "<div class='error'>Das Passwort muss mindestens 10 Zeichen lang sein, einen Großbuchstaben, einen Kleinbuchstaben, eine Zahl und ein Sonderzeichen enthalten.</div>";
+                }
+            } else {
+                echo "<div class='error'>Die Passwörter stimmen nicht überein. Bitte versuchen Sie es erneut.</div>";
+            }
+        }
+    } else {
+        echo "<div class='error'>Ungültiger oder abgelaufener Token.</div>";
+        exit();
+    }
+} else {
+    echo "<div class='error'>Token fehlt.</div>";
+    exit();
+}
+?>
+
+<!DOCTYPE html>
+<html lang="de">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Passwort Zurücksetzen</title>
+    <link rel="stylesheet" href="../css/reset_password.css">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0-beta3/css/all.min.css">
+</head>
+<body>
+<div class="container">
+    <h2>Neues Passwort Festlegen</h2>
+    <form id="reset-password-form" method="POST">
+        <div class="form-floating position-relative">
+            <input type="password" class="form-control" id="new_password" name="new_password" placeholder=" " required>
+            <label for="new_password">Neues Passwort</label>
+            <i class="fa fa-eye toggle-password" id="toggle-password1"></i>
+        </div>
+        <div class="form-floating position-relative">
+            <input type="password" class="form-control" id="confirm_password" name="confirm_password" placeholder=" " required>
+            <label for="confirm_password">Neues Passwort (Wiederholen)</label>
+            <i class="fa fa-eye toggle-password" id="toggle-password2"></i>
+        </div>
+        <div class="password-rules">
+            <p id="length-rule" class="invalid">- Mindestens 10 Zeichen</p>
+            <p id="lowercase-rule" class="invalid">- Kleinbuchstaben</p>
+            <p id="uppercase-rule" class="invalid">- Großbuchstaben</p>
+            <p id="symbol-rule" class="invalid">- Symbole</p>
+            <p id="number-rule" class="invalid">- Zahlen</p>
+            <p id="match-rule" class="invalid">- Gleiche Password</p>
+        </div>
+        <button type="submit" id="submit-button" disabled>Passwort Ändern</button>
+    </form>
+</div>
+
+    <script>
+document.querySelectorAll('.toggle-password').forEach(function (element) {
+    element.addEventListener('click', function () {
+        const passwordField = this.previousElementSibling.previousElementSibling;
+        if (passwordField.type === 'password') {
+            passwordField.type = 'text';
+            this.classList.remove('fa-eye');
+            this.classList.add('fa-eye-slash');
+        } else {
+            passwordField.type = 'password';
+            this.classList.remove('fa-eye-slash');
+            this.classList.add('fa-eye');
+        }
+    });
+});
+
+// Passwortregeln und Button-Status überprüfen
+const passwordInput = document.getElementById('new_password');
+const confirmPasswordInput = document.getElementById('confirm_password');
+const submitButton = document.getElementById('submit-button');
+
+function validatePassword() {
+    const password = passwordInput.value;
+    const confirmPassword = confirmPasswordInput.value;
+
+    const lengthRule = document.getElementById('length-rule');
+    const lowercaseRule = document.getElementById('lowercase-rule');
+    const uppercaseRule = document.getElementById('uppercase-rule');
+    const symbolRule = document.getElementById('symbol-rule');
+    const numberRule = document.getElementById('number-rule');
+    const matchRule = document.getElementById('match-rule');
+
+    const rulesMet = {
+        length: password.length >= 10,
+        lowercase: /[a-z]/.test(password),
+        uppercase: /[A-Z]/.test(password),
+        symbol: /[!@#$%^&*(),.?":{}|<>]/.test(password),
+        number: /\d/.test(password),
+        match: password === confirmPassword
+    };
+
+    lengthRule.className = rulesMet.length ? 'valid' : 'invalid';
+    lowercaseRule.className = rulesMet.lowercase ? 'valid' : 'invalid';
+    uppercaseRule.className = rulesMet.uppercase ? 'valid' : 'invalid';
+    symbolRule.className = rulesMet.symbol ? 'valid' : 'invalid';
+    numberRule.className = rulesMet.number ? 'valid' : 'invalid';
+    matchRule.className = rulesMet.match ? 'valid' : 'invalid';
+
+    const allValid = Object.values(rulesMet).every(Boolean);
+    submitButton.disabled = !allValid;
+}
+
+passwordInput.addEventListener('input', validatePassword);
+confirmPasswordInput.addEventListener('input', validatePassword);
+
+    </script>
+</body>
+</html>
+
+
+
+
+################## 3) SEND_RESET_LINK.PHP ########################
+
+
+<?php
+
+require '../pages/functions.php';
+require '../pages/vt.php';
+
+header('Content-Type: application/json'); // Als JSON-Antwort zurückgeben
+
+if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+    $email = $_POST['email'] ?? '';
+
+    if (!filter_var($email, FILTER_VALIDATE_EMAIL)) {
+        echo json_encode(['status' => 'error', 'message' => 'Ungültige E-Mail-Adresse.']);
+        exit();
+    }
+
+    $stmt = $dbh->prepare("SELECT * FROM users WHERE email = :email LIMIT 1");
+    $stmt->bindParam(':email', $email);
+    $stmt->execute();
+
+    if ($stmt->rowCount() > 0) {
+        $user = $stmt->fetch(PDO::FETCH_ASSOC);
+        
+        if ($user['userkey'] === null) {
+            echo json_encode([
+                'status' => 'error',
+                'message' => 'Bitte verwenden Sie den von Admin gesendeten Link oder das Passwort für die erste Anmeldung.',
+                'redirect' => '../pages/user_login.php'
+            ]);
+            exit();
+        }
+
+        $resetToken = generateToken();
+        $stmt = $dbh->prepare("INSERT INTO password_resets (email, token, expires_at) VALUES (:email, :token, :expires_at)");
+        $stmt->execute([':email' => $email, ':token' => $resetToken, ':expires_at' => date('Y-m-d H:i:s', strtotime('+24 hours'))]);
+
+        sendPasswordResetEmail($email, $resetToken);
+
+        $stmt = $dbh->prepare("INSERT INTO user_activity_logs (user_id, activity_type, activity_details) VALUES (:user_id, 'password_reset_request', 'Passwort-Reset-Link gesendet')");
+        $stmt->execute([':user_id' => $user['user_id']]);
+
+        echo json_encode(['status' => 'success']);
+        exit();
+    } else {
+        echo json_encode(['status' => 'success']);
+        exit();
+    }
+}
+?>
+
+
+
+################## 4)CHECK_FIRST_LOGIN.PHP ###################
+
+
+<?php
+require '../pages/vt.php';
+
+$data = json_decode(file_get_contents('php://input'), true);
+
+if (isset($data['email'])) {
+    $email = $data['email'];
+
+    $stmt = $dbh->prepare("SELECT * FROM users WHERE email = :email LIMIT 1");
+    $stmt->bindParam(':email', $email);
+    $stmt->execute();
+
+    if ($stmt->rowCount() > 0) {
+        $user = $stmt->fetch(PDO::FETCH_ASSOC);
+
+        if ($user['first_login'] === null) { // Eğer first_login null ise, kullanıcı henüz başarılı giriş yapmamış demektir
+            echo json_encode(['status' => 'error', 'message' => 'Lütfen ilk giriş için Admin\'in gönderdiği linki ya da şifreyi kullanın.']);
+            exit();
+        } else {
+            echo json_encode(['status' => 'success', 'redirect' => '../pages/reset_link.php']);
+            exit();
+        }
+    } else {
+        echo json_encode(['status' => 'error', 'message' => 'Bu e-posta adresi kayıtlı değil.']);
+    }
+} else {
+    echo json_encode(['status' => 'error', 'message' => 'E-posta adresi girilmedi.']);
+}
+
+
+
+
+
+
+(PAGES KLASÖRÜNDEKILER)
+
+################## 5)ADD_ADMIN.PHP ###################
+
+
+<?php
+$dsn = 'mysql:host=rdbms.strato.de;dbname=dbs13234765';
+$benutzername = 'dbu5465793';
+$passwort = 'Bekir1976.';
+
+try {
+    // Veritabanı bağlantısını oluştur
+    $dbh = new PDO($dsn, $benutzername, $passwort);
+    $dbh->setAttribute(PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION);
+
+    // Şifreyi hash'leyin
+    $hashedPassword = password_hash('Admin2024.', PASSWORD_DEFAULT);
+
+    // Admin için token oluştur
+    $token = bin2hex(random_bytes(32));
+
+    // Admin kullanıcısını ekleyin ve token'ı kaydedin
+    $stmt = $dbh->prepare("INSERT INTO users (name, surname, email, password, role, userkey) 
+                           VALUES (:name, :surname, :email, :password, :role, :userkey)");
+    $stmt->bindParam(':name', $name);
+    $stmt->bindParam(':surname', $surname);
+    $stmt->bindParam(':email', $email);
+    $stmt->bindParam(':password', $hashedPassword);
+    $stmt->bindParam(':role', $role);
+    $stmt->bindParam(':userkey', $token);
+
+    // Admin bilgileri
+    $name = 'admin';
+    $surname = 'admin';
+    $email = 'admin@gshuenxe.de';
+    $role = 'admin';
+
+    // Sorguyu çalıştır
+    $stmt->execute();
+
+    // Admin kullanıcı için token'ı çerez olarak ayarlayın
+    setcookie('user_token', $dbh->lastInsertId() . "_" . $token, time() + (86400 * 30), "/"); // 30 gün geçerli olacak şekilde ayarlanır
+
+    echo "Admin kullanıcı başarıyla eklendi, token oluşturuldu ve çerez ayarlandı!";
+} catch (PDOException $e) {
+    echo "Veritabanı hatası: " . $e->getMessage();
+}
+?>
+
+
+
+
+
+################## 6)ADD_TEACHER.PHP ###################
+
+
+<?php
+// Fehlerberichterstattung aktivieren
+error_reporting(E_ALL);
+ini_set('display_errors', 1);
+
+// Datenbankverbindung
+require '../pages/vt.php';
+
+if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+    // Formularwerte übernehmen
+    $name = trim($_POST['name'] ?? '');
+    $surname = trim($_POST['surname'] ?? '');
+    $email = trim($_POST['email'] ?? '');
+    $branch = trim($_POST['branch'] ?? '');
+    $additional_branch = trim($_POST['additional_branch'] ?? '');
+    $birth_date = trim($_POST['birth_date'] ?? '');
+    $phone_number_1 = trim($_POST['phone_number_1'] ?? '');
+    $phone_number_2 = trim($_POST['phone_number_2'] ?? '');
+    $password = $_POST['password'] ?? generateRandomPassword();
+
+    // Überprüfen, ob die E-Mail-Adresse bereits in der Datenbank vorhanden ist
+    $email_check_sql = "SELECT COUNT(*) FROM users WHERE email = :email";
+    $stmt = $dbh->prepare($email_check_sql);
+    $stmt->bindParam(':email', $email);
+    $stmt->execute();
+    $email_exists = $stmt->fetchColumn();
+
+    if ($email_exists) {
+        // E-Mail-Adresse bereits vorhanden
+        header("Location: form_add_teacher.php?status=email_exists");
+        exit();
+    } else {
+        // E-Mail-Adresse nicht vorhanden, Benutzer hinzufügen
+        $password_hash = password_hash($password, PASSWORD_DEFAULT);
+
+        try {
+            $dbh->beginTransaction();
+            $role = 'teacher'; 
+            $user_sql = "INSERT INTO users (name, surname, email, password, role) VALUES (:name, :surname, :email, :password, :role)";
+            $stmt = $dbh->prepare($user_sql);
+            $stmt->bindParam(':name', $name);
+            $stmt->bindParam(':surname', $surname);
+            $stmt->bindParam(':email', $email);
+            $stmt->bindParam(':password', $password_hash);
+            $stmt->bindParam(':role',  $role);
+            $stmt->execute();
+
+            $user_id = $dbh->lastInsertId();
+
+            $teacher_sql = "INSERT INTO teachers (user_id, branch, additional_branch, birth_date, phone_number_1, phone_number_2) 
+                            VALUES (:user_id, :branch, :additional_branch, :birth_date, :phone_number_1, :phone_number_2)";
+            $stmt = $dbh->prepare($teacher_sql);
+            $stmt->bindParam(':user_id', $user_id);
+            $stmt->bindParam(':branch', $branch);
+            $stmt->bindParam(':additional_branch', $additional_branch);
+            $stmt->bindParam(':birth_date', $birth_date);
+            $stmt->bindParam(':phone_number_1', $phone_number_1);
+            $stmt->bindParam(':phone_number_2', $phone_number_2);
+            $stmt->execute();
+
+            $dbh->commit();
+
+            // E-Mail senden
+            $to = $email;
+            $subject = 'Ihr neues Passwort';
+            $message = "Sehr geehrte/r Frau/Herr $surname,\n\n";
+            $message .= "Um Ihr neues Passwort festzulegen, verwenden Sie dieses Passwort: $password\n\n";
+            $message .= "Oder nutzen Sie den folgenden Link:\n";
+            $message .= "http://gshuenxe.de/api/reset_password.php?token=" . urlencode(base64_encode($user_id)) . "\n\n";
+            $message .= "Der Link ist 24 Stunden gültig und kann nur einmal verwendet werden.\n\n";
+            $message .= "Herr .....\nSchulleiter";
+
+            $headers = "From: admin@gs-hünxe.de";
+
+            mail($to, $subject, $message, $headers);
+
+            header("Location: form_add_teacher.php?status=success");
+            exit();
+
+        } catch (PDOException $e) {
+            $dbh->rollBack();
+            header("Location: form_add_teacher.php?status=error");
+            exit();
+        }
+    }
+}
+?>
+
+
+
+
+
+################## 7)ADMIN.PHP #################
+
+
+<?php
+require '../pages/functions.php';
+
+session_start();
+
+if (!checkToken()) {
+    // Wenn der Token ungültig ist, nur eine Warnmeldung anzeigen
+    echo "<div id='content'><p>Aus Sicherheitsgründen wurde Ihre Sitzung beendet. Bitte melden Sie sich erneut an.</p></div>";
+    echo "<script>setTimeout(function() { window.location.href = '../pages/user_login.php'; }, 700);</script>";
+    exit();
+}
+
+// Wenn der Benutzer die Seite benutzt, aktualisiere die letzte Aktivitätszeit
+$_SESSION['last_activity'] = time();
+?>
+
+<!DOCTYPE html>
+<html lang="de">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Admin-Panel</title>
+    <link rel="stylesheet" href="../css/sidebar.css">
+    <link rel="stylesheet" href="../css/content.css">
+    <link rel="stylesheet" href="../css/style_web.css">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0-beta3/css/all.min.css"> <!-- Font Awesome -->
+    <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600&display=swap" rel="stylesheet">
+</head>
+<body>
+    <div class="top-header">
+        <img src="../images/school-logo.png" alt="Schullogo" class="school-logo">
+        <div class="user-info">Willkommen, Frau Baumeister und Herr Baumeister</div>
+    </div>
+    <div class="wrapper">
+        <div class="main-container">
+            <button id="menu-button">Menü</button>
+            <!-- Seitenleiste -->
+            <div class="sidebar">
+                <ul class="menu">
+                    <li class="item"><a href="#" data-content="lehrer-aktionen"><i class="fas fa-user" style="color: #007bff;"></i><span>Lehreraktionen</span></a></li>
+                    <li class="item"><a href="#" data-content="schueler-aktionen"><i class="fas fa-user-graduate" style="color: #28a745;"></i><span>Schüleraktionen</span></a></li>
+                    <li class="item"><a href="#" data-content="kurs-aktionen"><i class="fas fa-book" style="color: #ffc107;"></i><span>Kursaktionen</span></a></li>
+                    <li class="item"><a href="#" data-content="stundenplan-aktionen"><i class="fas fa-calendar-alt" style="color: #17a2b8;"></i><span>Stundenplanaktionen</span></a></li>
+                    <li class="item"><a href="#" data-content="klassen-aktionen"><i class="fas fa-door-open" style="color: #6c757d;"></i><span>Klassenaktionen</span></a></li>
+                    <li class="item"><a href="#" data-content="eltern-aktionen"><i class="fas fa-user-friends" style="color: #fd7e14;"></i><span>Elternaktionen</span></a></li>
+                    <li class="item"><a href="#" data-content="ankuendigungen"><i class="fas fa-bullhorn" style="color: #dc3545;"></i><span>Ankündigungen</span></a></li>
+                    <li class="item"><a href="#" data-content="autorisierung"><i class="fas fa-user-shield" style="color: #6610f2;"></i><span>Autorisierung</span></a></li>
+                </ul>
+            </div>
+            
+            <!-- Inhaltsbereich -->
+            <div class="content" id="content-area">
+                <p>Bitte wählen Sie ein Menü aus.</p>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        document.querySelectorAll('.sidebar ul.menu li a').forEach(function(menuItem) {
+            menuItem.addEventListener('click', function(e) {
+                e.preventDefault();
+                const contentId = this.getAttribute('data-content');
+                loadSubMenu(contentId);
+            });
+        });
+
+        function loadSubMenu(contentId) {
+            const contentArea = document.getElementById('content-area');
+            let subMenuHtml = '';
+
+            switch (contentId) {
+                case 'lehrer-aktionen':
+                    subMenuHtml = `
+                        <div class="button-grid">
+                            <a href="#" data-action="lehrer-hinzufuegen"><i class="fas fa-user-plus"></i>Lehrer hinzufügen</a>
+                            <a href="#" data-action="lehrer-aktualisieren"><i class="fas fa-user-edit"></i>Lehrer aktualisieren</a>
+                            <a href="#" data-action="lehrer-loeschen"><i class="fas fa-user-minus"></i>Lehrer löschen</a>
+                            <a href="#" data-action="lehrer-liste"><i class="fas fa-list"></i>Lehrerliste</a>
+                            <a href="#" data-action="lehrer-unterricht-zuweisen"><i class="fas fa-chalkboard-teacher"></i>Lehrer zuweisen</a>
+                        </div>
+                    `;
+                    break;
+                case 'schueler-aktionen':
+                    subMenuHtml = `
+                        <div class="button-grid">
+                            <a href="#" data-action="schueler-hinzufuegen"><i class="fas fa-user-plus"></i>Schüler hinzufügen</a>
+                            <a href="#" data-action="schueler-aktualisieren"><i class="fas fa-user-edit"></i>Schüler aktualisieren</a>
+                            <a href="#" data-action="schueler-loeschen"><i class="fas fa-user-minus"></i>Schüler löschen</a>
+                            <a href="#" data-action="schueler-liste"><i class="fas fa-list"></i>Schülerliste</a>
+                            <a href="#" data-action="schueler-noten-bearbeiten"><i class="fas fa-book"></i>Notenverwaltung</a>
+                            <a href="#" data-action="schueler-anwesenheit"><i class="fas fa-calendar-check"></i>Anwesenheitsverwaltung</a>
+                        </div>
+                    `;
+                    break;
+                case 'kurs-aktionen':
+                    subMenuHtml = `
+                        <div class="button-grid">
+                            <a href="#" data-action="kurs-hinzufuegen"><i class="fas fa-book-open"></i>Kurs hinzufügen</a>
+                            <a href="#" data-action="kurs-aktualisieren"><i class="fas fa-edit"></i>Kurs aktualisieren</a>
+                            <a href="#" data-action="kurs-loeschen"><i class="fas fa-trash-alt"></i>Kurs löschen</a>
+                            <a href="#" data-action="kurs-liste"><i class="fas fa-list"></i>Kursliste</a>
+                        </div>
+                    `;
+                    break;
+                case 'stundenplan-aktionen':
+                    subMenuHtml = `
+                        <div class="button-grid">
+                            <a href="#" data-action="stundenplan-hinzufuegen"><i class="fas fa-calendar-plus"></i>Stundenplan hinzufügen</a>
+                            <a href="#" data-action="stundenplan-aktualisieren"><i class="fas fa-calendar-edit"></i>Stundenplan aktualisieren</a>
+                            <a href="#" data-action="stundenplan-loeschen"><i class="fas fa-calendar-minus"></i>Stundenplan löschen</a>
+                            <a href="#" data-action="stundenplan-liste"><i class="fas fa-calendar"></i>Stundenplanliste</a>
+                            <a href="#" data-action="stundenplan-konfliktpruefung"><i class="fas fa-exclamation-triangle"></i>Stundenplankonflikt überprüfen</a>
+                        </div>
+                    `;
+                    break;
+                case 'klassen-aktionen':
+                    subMenuHtml = `
+                        <div class="button-grid">
+                            <a href="#" data-action="klasse-hinzufuegen"><i class="fas fa-door-open"></i>Klasse hinzufügen</a>
+                            <a href="#" data-action="klasse-aktualisieren"><i class="fas fa-edit"></i>Klasse aktualisieren</a>
+                            <a href="#" data-action="klasse-loeschen"><i class="fas fa-door-closed"></i>Klasse löschen</a>
+                            <a href="#" data-action="klassenlehrer-zuweisen"><i class="fas fa-user-tie"></i>Klassenlehrer zuweisen</a>
+                        </div>
+                    `;
+                    break;
+                case 'eltern-aktionen':
+                    subMenuHtml = `
+                        <div class="button-grid">
+                            <a href="#" data-action="elternteil-hinzufuegen"><i class="fas fa-user-friends"></i>Elternteil hinzufügen</a>
+                            <a href="#" data-action="elternteil-aktualisieren"><i class="fas fa-user-friends"></i>Elternteil aktualisieren</a>
+                            <a href="#" data-action="elternteil-loeschen"><i class="fas fa-user-friends"></i>Elternteil löschen</a>
+                        </div>
+                    `;
+                    break;
+                case 'ankuendigungen':
+                    subMenuHtml = `
+                        <div class="button-grid">
+                            <a href="#" data-action="ankuendigung-hinzufuegen"><i class="fas fa-bullhorn"></i>Ankündigung hinzufügen</a>
+                            <a href="#" data-action="allgemeine-ankuendigungen"><i class="fas fa-bullhorn"></i>Allgemeine Ankündigungen</a>
+                            <a href="#" data-action="personal-ankuendigungen"><i class="fas fa-bullhorn"></i>Personalankündigungen</a>
+                            <a href="#" data-action="ankuendigung-aktualisieren"><i class="fas fa-edit"></i>Ankündigung aktualisieren</a>
+                            <a href="#" data-action="ankuendigung-loeschen"><i class="fas fa-trash-alt"></i>Ankündigung löschen</a>
+                        </div>
+                    `;
+                    break;
+                case 'autorisierung':
+                    subMenuHtml = `
+                        <div class="button-grid">
+                            <a href="#" data-action="rollenbasierte-autorisierung"><i class="fas fa-user-shield"></i>Rollenbasierte Autorisierung</a>
+                            <a href="#" data-action="benutzerbasierte-autorisierung"><i class="fas fa-user-shield"></i>Benutzerbasierte Autorisierung</a>
+                        </div>
+                    `;
+                    break;
+                default:
+                    subMenuHtml = '<p>Noch kein Inhalt verfügbar.</p>';
+                    break;
+            }
+
+            reverseAnimateContent(() => {
+                contentArea.innerHTML = subMenuHtml;
+                animateContent(() => {
+                    setupSubButtonListeners();
+                });
+            });
+        }
+
+        function setupSubButtonListeners() {
+            const contentArea = document.getElementById('content-area');
+            const subButtons = contentArea.querySelectorAll('.button-grid a');
+
+            subButtons.forEach(function(button) {
+                button.addEventListener('click', function(e) {
+                    e.preventDefault();
+                    const action = this.getAttribute('data-action');
+                    loadContentByAction(action);
+                });
+            });
+        }
+
+        function loadContentByAction(action) {
+            const contentArea = document.getElementById('content-area');
+            let contentUrl = '';
+
+            switch (action) {
+                case 'lehrer-hinzufuegen':
+                    contentUrl = '../pages/form_add_teacher.php';
+                    break;
+                case 'lehrer-loeschen':
+                    contentUrl = '../pages/form_delete_teacher.php';
+                    break;
+                case 'lehrer-aktualisieren':
+                    contentUrl = '../pages/form_update_teacher.php';
+                    break;
+                case 'lehrer-liste':
+                    contentUrl = '../pages/form_list_teacher.php';
+                    break;
+                case 'lehrer-unterricht-zuweisen':
+                    contentUrl = '../pages/form_assign_teacher.php';
+                    break;
+                case 'schueler-hinzufuegen':
+                    contentUrl = '../pages/form_add_student.php';
+                    break;
+                case 'schueler-loeschen':
+                    contentUrl = '../pages/form_delete_student.php';
+                    break;
+                case 'schueler-aktualisieren':
+                    contentUrl = '../pages/form_update_student.php';
+                    break;
+                case 'schueler-liste':
+                    contentUrl = '../pages/form_list_student.php';
+                    break;
+                case 'schueler-noten-bearbeiten':
+                    contentUrl = '../pages/form_manage_grades.php';
+                    break;
+                case 'schueler-anwesenheit':
+                    contentUrl = '../pages/form_attendance_student.php';
+                    break;
+                case 'kurs-hinzufuegen':
+                    contentUrl = '../pages/form_add_course.php';
+                    break;
+                case 'kurs-loeschen':
+                    contentUrl = '../pages/form_delete_course.php';
+                    break;
+                case 'kurs-aktualisieren':
+                    contentUrl = '../pages/form_update_course.php';
+                    break;
+                case 'kurs-liste':
+                    contentUrl = '../pages/form_list_courses.php';
+                    break;
+                case 'stundenplan-hinzufuegen':
+                    contentUrl = '../pages/form_add_schedule.php';
+                    break;
+                case 'stundenplan-loeschen':
+                    contentUrl = '../pages/form_delete_schedule.php';
+                    break;
+                case 'stundenplan-aktualisieren':
+                    contentUrl = '../pages/form_update_schedule.php';
+                    break;
+                case 'stundenplan-liste':
+                    contentUrl = '../pages/form_list_schedules.php';
+                    break;
+                case 'stundenplan-konfliktpruefung':
+                    contentUrl = '../pages/form_check_schedule_conflict.php';
+                    break;
+                case 'klasse-hinzufuegen':
+                    contentUrl = '../pages/form_add_class.php';
+                    break;
+                case 'klasse-loeschen':
+                    contentUrl = '../pages/form_delete_class.php';
+                    break;
+                case 'klasse-aktualisieren':
+                    contentUrl = '../pages/form_update_class.php';
+                    break;
+                case 'klassenlehrer-zuweisen':
+                    contentUrl = '../pages/form_assign_class_teacher.php';
+                    break;
+                case 'elternteil-hinzufuegen':
+                    contentUrl = '../pages/form_add_parent.php';
+                    break;
+                case 'elternteil-loeschen':
+                    contentUrl = '../pages/form_delete_parent.php';
+                    break;
+                case 'elternteil-aktualisieren':
+                    contentUrl = '../pages/form_update_parent.php';
+                    break;
+                case 'ankuendigung-hinzufuegen':
+                    contentUrl = '../pages/form_add_announcement.php';
+                    break;
+                case 'allgemeine-ankuendigungen':
+                    contentUrl = '../pages/form_list_announcements.php';
+                    break;
+                case 'personal-ankuendigungen':
+                    contentUrl = '../pages/form_list_staff_announcements.php';
+                    break;
+                case 'ankuendigung-loeschen':
+                    contentUrl = '../pages/form_delete_announcement.php';
+                    break;
+                case 'ankuendigung-aktualisieren':
+                    contentUrl = '../pages/form_update_announcement.php';
+                    break;
+                case 'rollenbasierte-autorisierung':
+                    contentUrl = '../pages/form_role_based_auth.php';
+                    break;
+                case 'benutzerbasierte-autorisierung':
+                    contentUrl = '../pages/form_user_based_auth.php';
+                    break;
+                default:
+                    contentArea.innerHTML = '<p>Noch kein Inhalt verfügbar.</p>';
+                    return;
+            }
+
+            fetch(contentUrl)
+                .then(response => response.text())
+                .then(html => {
+                    contentArea.innerHTML = html;
+                    setupFormSubmitListener();
+                })
+                .catch(error => {
+                    contentArea.innerHTML = `<p>Fehler beim Laden des Inhalts: ${error.message}</p>`;
+                });
+        }
+
+        function setupFormSubmitListener() {
+            const teacherForm = document.querySelector('.teacher-form');
+
+            if (teacherForm) {
+                teacherForm.removeEventListener('submit', formSubmitHandler);
+                teacherForm.addEventListener('submit', formSubmitHandler);
+            }
+        }
+
+        function formSubmitHandler(e) {
+            e.preventDefault();
+
+            let formData = new FormData(this);
+
+            fetch('form_add_teacher.php', {
+                method: 'POST',
+                body: formData
+            })
+            .then(response => response.text())
+            .then(result => {
+                document.getElementById('content-area').innerHTML = result;
+                setupFormSubmitListener();
+            })
+            .catch(error => {
+                console.error('Fehler:', error);
+            });
+        }
+
+        function animateContent(callback) {
+            const items = document.querySelectorAll('.button-grid a');
+            items.forEach((item, index) => {
+                setTimeout(() => {
+                    item.classList.add('show');
+                    if (index === items.length - 1 && typeof callback === 'function') {
+                        setTimeout(callback, 100);
+                    }
+                }, index * 100);
+            });
+        }
+
+        function reverseAnimateContent(callback) {
+            const items = document.querySelectorAll('.button-grid a.show');
+            const totalItems = items.length;
+
+            if (totalItems === 0) {
+                if (typeof callback === 'function') {
+                    callback();
+                }
+                return;
+            }
+
+            const delay = 100;
+
+            for (let i = totalItems - 1; i >= 0; i--) {
+                setTimeout(() => {
+                    items[i].classList.remove('show');
+                    items[i].style.pointerEvents = 'none';
+
+                    if (i === 0 && typeof callback === 'function') {
+                        setTimeout(callback, delay);
+                    }
+                }, (totalItems - 1 - i) * delay);
+            }
+        }
+
+        document.addEventListener('DOMContentLoaded', function() {
+            const menuButton = document.getElementById('menu-button');
+            const sidebar = document.querySelector('.sidebar');
+
+            if (menuButton && sidebar) {
+                menuButton.addEventListener('click', function(e) {
+                    e.stopPropagation();
+                    sidebar.classList.toggle('open');
+                });
+
+                document.addEventListener('click', function(e) {
+                    if (!sidebar.contains(e.target) && !menuButton.contains(e.target)) {
+                        sidebar.classList.remove('open');
+                    }
+                });
+            }
+
+            document.querySelectorAll('.sidebar ul.menu li a').forEach(function(menuItem) {
+                menuItem.addEventListener('click', function() {
+                    sidebar.classList.remove('open');
+                });
+            });
+        });
+    </script>
+</body>
+</html>
+
+
+
+
+
+
+
+################## 8)FORM_ADD_TEACHER.PHP ####################
+
+
+<?php
+require '../pages/functions.php';
+
+session_start();
+
+if (!checkToken()) {
+    echo "<div id='content'><p>Unbefugter Zugriff. Bitte melden Sie sich an.</p></div>";
+    header("Location: ../pages/user_login.php");
+    exit();
+}
+
+$errors = [];
+$message = '';
+$name = $surname = $email = $branch = $additional_branch = $birth_date = $phone_number_1 = $phone_number_2 = '';
+
+if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+    handleFormSubmission();
+} else {
+    $password = generateRandomPassword(); 
+}
+
+function handleFormSubmission() {
+    global $dbh, $errors, $message, $name, $surname, $email, $branch, $additional_branch, $birth_date, $phone_number_1, $phone_number_2;
+
+    $name = trim($_POST['name'] ?? '');
+    $surname = trim($_POST['surname'] ?? '');
+    $email = trim($_POST['email'] ?? '');
+    $branch = trim($_POST['branch'] ?? '');
+    $additional_branch = trim($_POST['additional_branch'] ?? '');
+    $birth_date = trim($_POST['birth_date'] ?? '');
+    $phone_number_1 = trim($_POST['phone_number_1'] ?? '');
+    $phone_number_2 = trim($_POST['phone_number_2'] ?? '');
+    $password = $_POST['password'] ?? generateRandomPassword();
+    $role = 'teacher';
+
+    if (empty($name)) $errors['name'] = "Das Namensfeld darf nicht leer sein.";
+    if (empty($surname)) $errors['surname'] = "Das Nachnamenfeld darf nicht leer sein.";
+    if (empty($email)) $errors['email'] = "Das E-Mail-Feld darf nicht leer sein.";
+    if (!filter_var($email, FILTER_VALIDATE_EMAIL)) $errors['email'] = "Ungültige E-Mail-Adresse.";
+
+    if (empty($errors)) {
+        try {
+            $dbh->beginTransaction();
+
+            $password_hash = password_hash($password, PASSWORD_DEFAULT);
+            $stmt = $dbh->prepare("INSERT INTO users (name, surname, email, password, role) VALUES (:name, :surname, :email, :password, :role)");
+            $stmt->execute([':name' => $name, ':surname' => $surname, ':email' => $email, ':password' => $password_hash, ':role' => $role]);
+
+            $user_id = $dbh->lastInsertId();
+
+            $stmt = $dbh->prepare("INSERT INTO teachers (user_id, branch, additional_branch, birth_date, phone_number_1, phone_number_2, email) 
+                                    VALUES (:user_id, :branch, :additional_branch, :birth_date, :phone_number_1, :phone_number_2, :email)");
+            $stmt->execute([
+                ':user_id' => $user_id,
+                ':branch' => $branch,
+                ':additional_branch' => $additional_branch,
+                ':birth_date' => $birth_date,
+                ':phone_number_1' => $phone_number_1,
+                ':phone_number_2' => $phone_number_2,
+                ':email' => $email
+            ]);
+
+            $dbh->commit();
+
+            if (sendTeacherEmail($email, $surname)) {
+                $message = "<div style='color: green;'>Lehrer erfolgreich hinzugefügt und E-Mail gesendet.</div>";
+            } else {
+                $errors['general'] = "Lehrer hinzugefügt, aber E-Mail konnte nicht gesendet werden.";
+            }
+        } catch (PDOException $e) {
+            $dbh->rollBack();
+            $errors['general'] = "Datenbankfehler: Diese E-Mail-Adresse ist bereits im System registriert.";
+        }
+    }
+
+    if (isset($_POST['api']) && $_POST['api'] === 'true') {
+        if (empty($errors)) {
+            echo json_encode(['status' => 'success', 'message' => $message]);
+        } else {
+            echo json_encode(['status' => 'error', 'message' => 'Ein Fehler ist aufgetreten.', 'errors' => $errors]);
+        }
+        exit;
+    }
+}
+?>
+
+<!DOCTYPE html>
+<html lang="de">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Lehrer Hinzufügen</title>
+    <style>
+        .teacher-form {
+            display: grid;
+            gap: 15px;
+            max-width: 600px;
+            margin: 0 auto;
+            padding: 20px;
+            background-color: #f9f9f9;
+            border-radius: 8px;
+            box-shadow: 0 4px 8px rgba(0, 0, 0, 0.1);
+        }
+
+        .teacher-form .form-group {
+            display: flex;
+            flex-direction: column;
+        }
+
+        .teacher-form label {
+            margin-bottom: 5px;
+            font-weight: bold;
+        }
+
+        .teacher-form input[type="text"],
+        .teacher-form input[type="email"],
+        .teacher-form input[type="tel"],
+        .teacher-form input[type="date"],
+        .teacher-form input[type="password"] {
+            padding: 10px;
+            border: 1px solid #ddd;
+            border-radius: 5px;
+            font-size: 16px;
+        }
+
+        .teacher-form .checkbox-group {
+            display: flex;
+            flex-direction: column;
+        }
+
+        .teacher-form .checkbox-group label {
+            margin-bottom: 5px;
+        }
+
+        .btn-submit {
+            padding: 10px 20px;
+            background-color: #007bff;
+            color: white;
+            border: none;
+            border-radius: 5px;
+            font-size: 16px;
+            cursor: pointer;
+        }
+
+        .btn-submit:hover {
+            background-color: #0056b3;
+        }
+    </style>
+</head>
+<body>
+    <div id="content">
+        <h2>Lehrer Hinzufügen</h2>
+
+        <?php
+        if (!empty($message)) {
+            echo $message;
+        }
+
+        if (!empty($errors)) {
+            echo "<div style='color: red;'><ul>";
+            foreach ($errors as $error) {
+                echo "<li>$error</li>";
+            }
+            echo "</ul></div>";
+        }
+        ?>
+
+<form action="" method="POST" class="teacher-form">
+    <div class="form-group">
+        <label for="name">Vorname:</label>
+        <input type="text" id="name" name="name" value="<?php echo htmlspecialchars($name); ?>" required>
+    </div>
+    <div class="form-group">
+        <label for="surname">Nachname:</label>
+        <input type="text" id="surname" name="surname" value="<?php echo htmlspecialchars($surname); ?>" required>
+    </div>
+    <div class="form-group">
+        <label for="email">E-Mail:</label>
+        <input type="email" id="email" name="email" value="<?php echo htmlspecialchars($email); ?>" required>
+    </div>
+    <div class="form-group">
+        <label for="branch">Fachrichtung:</label>
+        <input type="text" id="branch" name="branch" value="<?php echo htmlspecialchars($branch); ?>" required>
+    </div>
+    <div class="form-group">
+        <label for="additional_branch">Zusätzliches Fach (Optional):</label>
+        <input type="text" id="additional_branch" name="additional_branch" value="<?php echo htmlspecialchars($additional_branch); ?>">
+    </div>
+    <div class="form-group">
+        <label for="birth_date">Geburtsdatum:</label>
+        <input type="date" id="birth_date" name="birth_date" value="<?php echo htmlspecialchars($birth_date); ?>" required>
+    </div>
+    <div class="form-group">
+        <label for="phone_number_1">Kontakt Nummer 1:</label>
+        <input type="tel" id="phone_number_1" name="phone_number_1" value="<?php echo htmlspecialchars($phone_number_1); ?>" required>
+    </div>
+    <div class="form-group">
+        <label for="phone_number_2">Kontakt Nummer 2 (Optional):</label>
+        <input type="tel" id="phone_number_2" name="phone_number_2" value="<?php echo htmlspecialchars($phone_number_2); ?>">
+    </div>
+    <div class="form-group">
+        <label for="password">Passwort:</label>
+        <input type="password" id="password" name="password" value="<?php echo htmlspecialchars($password); ?>" readonly>
+    </div>
+    <button type="submit" class="btn-submit">Lehrer Hinzufügen</button>
+</form>
+
+    </div>
+</body>
+</html>
+
+
+
+
+
+
+
+
+################## 9)FUNCTIONS.PHP ###################
+
+
+<?php
+use PHPMailer\PHPMailer\PHPMailer;
+use PHPMailer\PHPMailer\Exception;
+require 'vt.php';
+
+session_start(); // Sitzung starten, sollte immer am Anfang sein
+
+function checkToken() {
+    global $dbh;
+
+    if (isset($_COOKIE['user_token'])) {
+        $token = $_COOKIE['user_token'];
+        $stmt = $dbh->prepare("SELECT * FROM users WHERE userkey = :token LIMIT 1");
+        $stmt->bindParam(':token', $token);
+        $stmt->execute();
+
+        if ($stmt->rowCount() > 0) {
+            $user = $stmt->fetch(PDO::FETCH_ASSOC);
+
+            return true;
+        }
+    }
+
+    return false;
+}
+function generateToken() {
+    return bin2hex(random_bytes(32)); // Erzeugt einen zufälligen Token
+}
+function sendTeacherEmail($email, $surname) {
+    require '../vendor/autoload.php';
+
+    // Token erstellen
+    $resetToken = generateToken();
+    $resetLink = "https://gshuenxe.de/api/reset_password.php?token=" . urlencode($resetToken);
+
+    // Token in die Datenbank eintragen
+    global $dbh;
+    $stmt = $dbh->prepare("INSERT INTO password_resets (email, token, expires_at) VALUES (:email, :token, :expires_at)");
+    $stmt->execute([
+        ':email' => $email,
+        ':token' => $resetToken,
+        ':expires_at' => date('Y-m-d H:i:s', strtotime('+24 hours'))
+    ]);
+
+    // E-Mail senden
+    $mail = new PHPMailer(true);
+    try {
+        $mail->isSMTP();
+        $mail->Host = 'smtp.strato.de';
+        $mail->SMTPAuth = true;
+        $mail->Username = 'info@gshuenxe.de';
+        $mail->Password = 'Bekir1976.';
+        $mail->SMTPSecure = PHPMailer::ENCRYPTION_SMTPS;
+        $mail->Port = 465;
+
+        $mail->setFrom('info@gshuenxe.de', 'Schulleiter');
+        $mail->addAddress($email);
+
+        $mail->isHTML(false);
+        $mail->Subject = 'Ihr neues Passwort';
+        $mail->Body = "Sehr geehrte/r Frau/Herr $surname,\n\n";
+        $mail->Body .= "Um Ihr neues Passwort festzulegen, verwenden Sie diesen Link:\n";
+        $mail->Body .= "$resetLink\n\n";
+        $mail->Body .= "Der Link ist 24 Stunden gültig und kann nur einmal verwendet werden.\n\n";
+        $mail->Body .= "Herr .....\nSchulleiter";
+
+        $mail->send();
+        return true;
+    } catch (Exception $e) {
+        return false;
+    }
+}
+
+function generateRandomPassword($length = 10) {
+    $characters = '0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ!@#$%^&*()';
+    $charactersLength = strlen($characters);
+    $randomPassword = '';
+    for ($i = 0; $i < $length; $i++) {
+        $randomPassword .= $characters[rand(0, $charactersLength - 1)];
+    }
+    return $randomPassword;
+}
+
+function isStrongPassword($password) {
+    // Das Passwort muss mindestens 8 Zeichen lang sein und einen Großbuchstaben, einen Kleinbuchstaben, eine Zahl und ein Sonderzeichen enthalten
+    return strlen($password) >= 8 &&
+           preg_match('/[A-Z]/', $password) &&
+           preg_match('/[a-z]/', $password) &&
+           preg_match('/[0-9]/', $password) &&
+           preg_match('/[\W]/', $password); // \W = non-word characters (Sonderzeichen)
+}
+function sendPasswordResetEmail($email, $token) {
+    $resetLink = "https://gshuenxe.de/api/reset_password.php?token=" . urlencode($token);
+    
+    // E-Mail senden
+    $subject = "Anfrage zum Zurücksetzen des Passworts";
+    $message = "Hallo,\n\nUm Ihr Passwort zurückzusetzen, klicken Sie auf den folgenden Link:\n" . $resetLink;
+    $headers = "From: no-reply@gshuenxe.de";
+
+    mail($email, $subject, $message, $headers);
+}
+
+
+
+
+
+
+
+
+
+################## 10)RESET_LINK.PHP ####################
+
+
+<!DOCTYPE html>
+<html lang="de">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Passwort Zurücksetzen</title>
+    <link rel="stylesheet" href="../css/bootstrap.min.css">
+    <link rel="stylesheet" href="../css/reset_link.css"> <!-- CSS-Datei einbinden -->
+</head>
+<body id="login-page">
+    <div class="container">
+        <h2>Passwort Zurücksetzen</h2>
+        <form id="reset-form" method="post" action="../api/send_reset_link.php">
+            <div class="form-floating">
+                <input type="email" class="form-control" id="floatingInput" name="email" placeholder="name@example.com" required>
+                <label for="floatingInput">E-Mail-Adresse</label>
+            </div>
+            <button type="submit" class="btn btn-primary">Passwort Zurücksetzen</button>
+        </form>
+    </div>
+    <script>
+        document.getElementById('reset-form').addEventListener('submit', function(e) {
+    e.preventDefault();
+    const formData = new FormData(this);
+
+    fetch('../api/send_reset_link.php', {
+        method: 'POST',
+        body: formData
+    })
+    .then(response => response.json())
+    .then(data => {
+        if (data.status === 'success') {
+            alert('Wenn Ihre E-Mail-Adresse in unserem System registriert ist, senden wir Ihnen einen Link zum Zurücksetzen des Passworts.');
+            window.location.href = 'user_login.php';
+        } else if (data.status === 'error') {
+            alert(data.message);
+            if (data.redirect) {
+                window.location.href = data.redirect;
+            }
+        }
+    })
+    .catch(error => {
+        console.error('Fehler:', error);
+    });
+});
+
+    </script>
+</body>
+</html>
+
+
+
+
+###################### 11) TEACHER.PHP #################
+
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Admin Paneli</title>
+    <link rel="stylesheet" href="../css/sidebar.css">
+    <link rel="stylesheet" href="../css/content.css">
+    <link rel="stylesheet" href="../css/style_web.css">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0-beta3/css/all.min.css"> <!-- Font Awesome -->
+    <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600&display=swap" rel="stylesheet">
+</head>
+<body>
+    <div class="top-header">
+        <img src="../images/school-logo.png" alt="Okul Logosu" class="school-logo">
+        <div class="user-info">Hoşgeldin, Frau Baumeister und Herr Baumeister</div>
+    </div>
+    <div class="wrapper">
+        <div class="main-container">
+            <button id="menu-button">Menu</button>
+            <!-- Sidebar -->
+            <div class="sidebar">
+                <ul class="menu">
+                    <li class="item"><a href="#" data-content="ogrenci-islemleri"><i class="fas fa-user-graduate" style="color: #28a745;"></i><span>Öğrenci İşlemleri</span></a></li>
+                    <li class="item"><a href="#" data-content="ders-programi-islemleri"><i class="fas fa-calendar-alt" style="color: #17a2b8;"></i><span>Ders Programı İşlemleri</span></a></li>
+                    <li class="item"><a href="#" data-content="duyurular"><i class="fas fa-bullhorn" style="color: #dc3545;"></i><span>Duyurular</span></a></li>
+                    <li class="item"><a href="#" data-content="mesajlar"><i class="fas fa-envelope" style="color: #007bff;"></i><span>Mesajlar</span></a></li>
+                    <li class="item"><a href="#" data-content="kullanici-islemleri"><i class="fas fa-user-cog" style="color: #17a2b8;"></i><span>Kullanıcı İşlemleri</span></a></li>
+                    </ul>
+            </div>
+            
+            <!-- İçerik Alanı -->
+            <div class="content" id="content-area">
+                <p>Lütfen bir menü seçin.</p>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        document.querySelectorAll('.sidebar ul.menu li a').forEach(function(menuItem) {
+            menuItem.addEventListener('click', function(e) {
+                e.preventDefault();
+                const contentId = this.getAttribute('data-content');
+                loadSubMenu(contentId);
+            });
+        });
+
+        function loadSubMenu(contentId) {
+            const contentArea = document.getElementById('content-area');
+            let subMenuHtml = '';
+
+            switch (contentId) {
+                case 'ogrenci-islemleri':
+                    subMenuHtml = `
+                        <div class="button-grid">
+                            <a href="#" data-action="ogrenci-not-islemleri"><i class="fas fa-book"></i>Öğrenci Not İşlemleri</a>
+                            <a href="#" data-action="ogrenci-listesi"><i class="fas fa-list"></i>Öğrenci Listesi</a>
+                            <a href="#" data-action="ogrenci-devamsizlik"><i class="fas fa-calendar-check"></i>Öğrenci Devamsızlık</a>
+                        </div>
+                    `;
+                    break;
+                
+                case 'ders-programi-islemleri':
+                    subMenuHtml = `
+                        <div class="button-grid">
+                          <a href="#" data-action="ders-programi-listesi"><i class="fas fa-calendar"></i>Ders Programı Listesi</a>
+                        </div>
+                    `;
+                    break;
+
+                case 'mesajlar':
+                    subMenuHtml = `
+                        <div class="button-grid">
+                            <a href="#" data-action="mesaj-gönder"><i class="fas fa-paper-plane"></i>Mesaj Gönder</a>
+                            <a href="#" data-action="mesajlari-oku"><i class="fas fa-envelope-open-text"></i>Mesajları Oku</a>
+                        </div>
+                    `;
+                    break;
+                
+                case 'kullanici-islemleri':
+                    subMenuHtml = `
+                        <div class="button-grid">
+                            <a href="#" data-action="bilgileri-güncelle"><i class="fas fa-users-cog"></i>Bilgileri Güncelle</a>
+                            <a href="#" data-action="logout"><i class="fas fa-user-lock"></i>Logout</a>
+</div>
+                    `;
+                    break;
+                default:
+                    subMenuHtml = '<p>Henüz içerik mevcut değil.</p>';
+                    break;
+            }
+
+            reverseAnimateContent(() => {
+                contentArea.innerHTML = subMenuHtml;
+                animateContent(() => {
+                    setupSubButtonListeners();
+                });
+            });
+        }
+
+        function setupSubButtonListeners() {
+            const contentArea = document.getElementById('content-area');
+            const subButtons = contentArea.querySelectorAll('.button-grid a');
+
+            subButtons.forEach(function(button) {
+                button.addEventListener('click', function(e) {
+                    e.preventDefault();
+                    const action = this.getAttribute('data-action');
+                    loadContentByAction(action);
+                });
+            });
+        }
+
+        function loadContentByAction(action) {
+            const contentArea = document.getElementById('content-area');
+            let contentUrl = '';
+
+            switch (action) {
+                case 'ogretmen-ekle':
+                    contentUrl = '../pages/form_add_teacher.php';
+                    break;
+                case 'ogretmen-sil':
+                    contentUrl = '../pages/form_delete_teacher.php';
+                    break;
+                case 'ogretmen-guncelle':
+                    contentUrl = '../pages/form_update_teacher.php';
+                    break;
+                case 'ogretmen-listesi':
+                    contentUrl = '../pages/form_list_teacher.php';
+                    break;
+                case 'ogretmen-ders-atama':
+                    contentUrl = '../pages/form_assign_teacher.php';
+                    break;
+                case 'ogrenci-ekle':
+                    contentUrl = '../pages/form_add_student.php';
+                    break;
+                case 'ogrenci-sil':
+                    contentUrl = '../pages/form_delete_student.php';
+                    break;
+                case 'ogrenci-guncelle':
+                    contentUrl = '../pages/form_update_student.php';
+                    break;
+                case 'ogrenci-listesi':
+                    contentUrl = '../pages/form_list_student.php';
+                    break;
+                case 'ogrenci-not-islemleri':
+                    contentUrl = '../pages/form_manage_grades.php';
+                    break;
+                case 'ogrenci-devamsizlik':
+                    contentUrl = '../pages/form_attendance_student.php';
+                    break;
+                case 'ders-ekle':
+                    contentUrl = '../pages/form_add_course.php';
+                    break;
+                case 'ders-sil':
+                    contentUrl = '../pages/form_delete_course.php';
+                    break;
+                case 'ders-guncelle':
+                    contentUrl = '../pages/form_update_course.php';
+                    break;
+                case 'ders-listesi':
+                    contentUrl = '../pages/form_list_courses.php';
+                    break;
+                case 'ders-programi-ekle':
+                    contentUrl = '../pages/form_add_schedule.php';
+                    break;
+                case 'ders-programi-sil':
+                    contentUrl = '../pages/form_delete_schedule.php';
+                    break;
+                case 'ders-programi-guncelle':
+                    contentUrl = '../pages/form_update_schedule.php';
+                    break;
+                case 'ders-programi-listesi':
+                    contentUrl = '../pages/form_list_schedules.php';
+                    break;
+                case 'ders-programi-cakis-kontrolu':
+                    contentUrl = '../pages/form_check_schedule_conflict.php';
+                    break;
+                case 'sinif-ekle':
+                    contentUrl = '../pages/form_add_class.php';
+                    break;
+                case 'sinif-sil':
+                    contentUrl = '../pages/form_delete_class.php';
+                    break;
+                case 'sinif-guncelle':
+                    contentUrl = '../pages/form_update_class.php';
+                    break;
+                case 'sinif-ogretmeni-atama':
+                    contentUrl = '../pages/form_assign_class_teacher.php';
+                    break;
+                case 'veli-ekle':
+                    contentUrl = '../pages/form_add_parent.php';
+                    break;
+                case 'veli-sil':
+                    contentUrl = '../pages/form_delete_parent.php';
+                    break;
+                case 'veli-guncelle':
+                    contentUrl = '../pages/form_update_parent.php';
+                    break;
+                case 'duyuru-ekle':
+                    contentUrl = '../pages/form_add_announcement.php';
+                    break;
+                case 'genel-duyurular':
+                    contentUrl = '../pages/form_list_announcements.php';
+                    break;
+                case 'personel-duyurulari':
+                    contentUrl = '../pages/form_list_staff_announcements.php';
+                    break;
+                case 'duyuru-sil':
+                    contentUrl = '../pages/form_delete_announcement.php';
+                    break;
+                case 'duyuru-guncelle':
+                    contentUrl = '../pages/form_update_announcement.php';
+                    break;
+                case 'rol-bazli-yetkilendirme':
+                    contentUrl = '../pages/form_role_based_auth.php';
+                    break;
+                case 'kullanici-bazli-yetkilendirme':
+                    contentUrl = '../pages/form_user_based_auth.php';
+                    break;
+                default:
+                    contentArea.innerHTML = '<p>Henüz içerik mevcut değil.</p>';
+                    return;
+            }
+
+            fetch(contentUrl)
+                .then(response => response.text())
+                .then(html => {
+                    contentArea.innerHTML = html;
+                    setupFormSubmitListener();
+                })
+                .catch(error => {
+                    contentArea.innerHTML = `<p>İçerik yüklenirken bir hata oluştu: ${error.message}</p>`;
+                });
+        }
+
+        function setupFormSubmitListener() {
+            const teacherForm = document.querySelector('.teacher-form');
+
+            if (teacherForm) {
+                teacherForm.removeEventListener('submit', formSubmitHandler);
+                teacherForm.addEventListener('submit', formSubmitHandler);
+            }
+        }
+
+        function formSubmitHandler(e) {
+            e.preventDefault(); // Formun varsayılan gönderimini engelle
+
+            let formData = new FormData(this);
+
+            fetch('form_add_teacher.php', {
+                method: 'POST',
+                body: formData
+            })
+            .then(response => response.text())
+            .then(result => {
+                document.getElementById('content-area').innerHTML = result;
+                setupFormSubmitListener(); // Form yüklendikten sonra tekrar listener ekle
+            })
+            .catch(error => {
+                console.error('Hata:', error);
+            });
+        }
+
+        function animateContent(callback) {
+            const items = document.querySelectorAll('.button-grid a');
+            items.forEach((item, index) => {
+                setTimeout(() => {
+                    item.classList.add('show');
+                    if (index === items.length - 1 && typeof callback === 'function') {
+                        setTimeout(callback, 100);
+                    }
+                }, index * 100);
+            });
+        }
+
+        function reverseAnimateContent(callback) {
+            const items = document.querySelectorAll('.button-grid a.show');
+            const totalItems = items.length;
+
+            if (totalItems === 0) {
+                if (typeof callback === 'function') {
+                    callback();
+                }
+                return;
+            }
+
+            const delay = 100;
+
+            for (let i = totalItems - 1; i >= 0; i--) {
+                setTimeout(() => {
+                    items[i].classList.remove('show');
+                    items[i].style.pointerEvents = 'none';
+
+                    if (i === 0 && typeof callback === 'function') {
+                        setTimeout(callback, delay);
+                    }
+                }, (totalItems - 1 - i) * delay);
+            }
+        }
+
+        document.addEventListener('DOMContentLoaded', function() {
+            const menuButton = document.getElementById('menu-button');
+            const sidebar = document.querySelector('.sidebar');
+
+            if (menuButton && sidebar) {
+                // Menü butonuna tıklayınca sidebar'ı açıp kapat
+                menuButton.addEventListener('click', function(e) {
+                    e.stopPropagation(); // Bu tıklamanın yayılmasını durdurur
+                    sidebar.classList.toggle('open');
+                });
+
+                // Sayfanın herhangi bir yerine tıklayınca sidebar'ı kapat
+                document.addEventListener('click', function(e) {
+                    if (!sidebar.contains(e.target) && !menuButton.contains(e.target)) {
+                        sidebar.classList.remove('open');
+                    }
+                });
+            }
+
+            // Menü öğelerine tıklanınca sidebar'ı kapat
+            document.querySelectorAll('.sidebar ul.menu li a').forEach(function(menuItem) {
+                menuItem.addEventListener('click', function() {
+                    sidebar.classList.remove('open');
+                });
+            });
+        });
+    </script>
+</body>
+</html>
+
+
+
+
+
+
+
+################## 12)USER_LOGIN.PHP ################
+
+
+<?php
+session_start();
+?>
+
+<!DOCTYPE html>
+<html lang="de">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Anmeldeseite</title>
+    <link rel="stylesheet" href="../css/bootstrap.min.css">
+    <link rel="stylesheet" href="../css/user_login.css">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0-beta3/css/all.min.css">
+</head>
+<body id="login-page">
+    <div class="container">
+        <div class="left-side">
+            <img src="../images/gsh_index_bold.png" alt="Bild" class="login-image">
+        </div>
+        <div class="right-side">
+            <div class="logo-container">
+                <img src="../images/gsh.png" alt="Logo" class="logo-image">
+            </div>
+            <div class="login-form-container">
+                <h2>Anmelden</h2>
+                <div id="error-message" class="alert alert-danger" style="display: none;"></div>
+
+                <form id="login-form" method="post">
+                    <div class="form-floating mb-3">
+                        <input type="email" class="form-control" id="floatingInput" name="email" placeholder="name@example.com" required>
+                        <label for="floatingInput">E-Mail-Adresse</label>
+                    </div>
+                    <div class="form-floating position-relative">
+                        <input type="password" class="form-control" id="floatingPassword" name="password" placeholder="Passwort" required>
+                        <label for="floatingPassword">Passwort</label>
+                        <i class="fa fa-eye toggle-password" style="position: absolute; right: 10px; top: 50%; transform: translateY(-50%); cursor: pointer;"></i>
+                    </div>
+                    <div class="forgot-password">
+                        <a href="reset_link.php">Passwort vergessen</a>
+                    </div>
+                    <div class="form-check mb-3">
+                        <input class="form-check-input" type="checkbox" id="stayLoggedIn" name="stay_logged_in">
+                        <label class="form-check-label" for="stayLoggedIn"> Angemeldet bleiben</label>
+                    </div>
+                    <button type="submit" class="login-button btn btn-primary">Anmelden</button>
+                </form>
+            </div>
+        </div>
+    </div>
+    <script src="../js/reload.js"></script>
+    <script>
+        document.querySelector('.toggle-password').addEventListener('click', function () {
+            const passwordField = document.getElementById('floatingPassword');
+            const icon = this;
+
+            if (passwordField.type === 'password') {
+                passwordField.type = 'text';
+                icon.classList.remove('fa-eye');
+                icon.classList.add('fa-eye-slash');
+            } else {
+                passwordField.type = 'password';
+                icon.classList.remove('fa-eye-slash');
+                icon.classList.add('fa-eye');
+            }
+        });
+
+        document.getElementById('login-form').addEventListener('submit', function(e) {
+            e.preventDefault();
+            const formData = new FormData(this);
+
+            fetch('../api/login.php', {
+                method: 'POST',
+                body: formData
+            })
+            .then(response => response.json())
+            .then(data => {
+                const errorMessage = document.getElementById('error-message');
+                if (data.status === 'error') {
+                    errorMessage.innerText = data.message;
+                    errorMessage.style.display = 'block';
+                } else if (data.status === 'success') {
+                    window.location.href = data.redirect;
+                }
+            })
+            .catch(error => {
+                console.error('Fehler:', error);
+            });
+        });
+    </script>
+</body>
+</html>
+
+
+
+
+
+
+
+################## 13)VT.PHP ###############
+
+
+<?php
+$dsn = 'mysql:host=rdbms.strato.de;port=22;dbname=dbs13234765';
+$benutzername = 'dbu5465793';
+$passwort = 'Bekir1976.';
+
+try {
+    // Datenbankverbindung herstellen
+    $dbh = new PDO($dsn, $benutzername, $passwort);
+    // PDO-Fehlermodus setzen
+    $dbh->setAttribute(PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION);
+    // echo "Verbindung zur Datenbank hergestellt."; // Diese Zeile entfernen
+} catch (PDOException $e) {
+    // Fehler bei der Verbindung ausgeben
+    die("Fehler bei der Verbindung zur Datenbank: " . $e->getMessage());
+}
+
+
+
+
+
+
+
+(JS KLASORÜNDEKILER)
+
+
+
+################## 14)MENU.JS #########################
+
+
+document.querySelectorAll('.sidebar ul.menu li a').forEach(function(menuItem) {
+    menuItem.addEventListener('click', function(e) {
+        e.preventDefault();
+        const contentId = this.getAttribute('data-content');
+        loadSubMenu(contentId);
+    });
+});
+
+function loadSubMenu(contentId) {
+    const contentArea = document.getElementById('content-area');
+    let subMenuHtml = '';
+
+    switch (contentId) {
+        case 'lehrer-verwaltung':
+            subMenuHtml = `
+                <div class="button-grid">
+                    <a href="#" data-action="lehrer-hinzufuegen"><i class="fas fa-user-plus"></i>Lehrer Hinzufügen</a>
+                    <a href="#" data-action="lehrer-aktualisieren"><i class="fas fa-user-edit"></i>Lehrer Aktualisieren</a>
+                    <a href="#" data-action="lehrer-loeschen"><i class="fas fa-user-minus"></i>Lehrer Löschen</a>
+                    <a href="#" data-action="lehrer-liste"><i class="fas fa-list"></i>Lehrerliste</a>
+                    <a href="#" data-action="lehrer-unterricht-zuweisen"><i class="fas fa-chalkboard-teacher"></i>Lehrer Unterricht Zuweisen</a>
+                </div>
+            `;
+            break;
+        case 'schueler-verwaltung':
+            subMenuHtml = `
+                <div class="button-grid">
+                    <a href="#" data-action="schueler-hinzufuegen"><i class="fas fa-user-plus"></i>Schüler Hinzufügen</a>
+                    <a href="#" data-action="schueler-aktualisieren"><i class="fas fa-user-edit"></i>Schüler Aktualisieren</a>
+                    <a href="#" data-action="schueler-loeschen"><i class="fas fa-user-minus"></i>Schüler Löschen</a>
+                    <a href="#" data-action="schueler-liste"><i class="fas fa-list"></i>Schülerliste</a>
+                    <a href="#" data-action="schueler-noten-bearbeiten"><i class="fas fa-book"></i>Schülernoten Bearbeiten</a>
+                    <a href="#" data-action="schueler-anwesenheit"><i class="fas fa-calendar-check"></i>Schüler Anwesenheit</a>
+                </div>
+            `;
+            break;
+        case 'unterricht-verwaltung':
+            subMenuHtml = `
+                <div class="button-grid">
+                    <a href="#" data-action="unterricht-hinzufuegen"><i class="fas fa-book-open"></i>Unterricht Hinzufügen</a>
+                    <a href="#" data-action="unterricht-aktualisieren"><i class="fas fa-edit"></i>Unterricht Aktualisieren</a>
+                    <a href="#" data-action="unterricht-loeschen"><i class="fas fa-trash-alt"></i>Unterricht Löschen</a>
+                    <a href="#" data-action="unterricht-liste"><i class="fas fa-list"></i>Unterrichtsliste</a>
+                </div>
+            `;
+            break;
+        case 'stundenplan-verwaltung':
+            subMenuHtml = `
+                <div class="button-grid">
+                    <a href="#" data-action="stundenplan-hinzufuegen"><i class="fas fa-calendar-plus"></i>Stundenplan Hinzufügen</a>
+                    <a href="#" data-action="stundenplan-aktualisieren"><i class="fas fa-calendar-edit"></i>Stundenplan Aktualisieren</a>
+                    <a href="#" data-action="stundenplan-loeschen"><i class="fas fa-calendar-minus"></i>Stundenplan Löschen</a>
+                    <a href="#" data-action="stundenplan-liste"><i class="fas fa-calendar"></i>Stundenplan Liste</a>
+                    <a href="#" data-action="stundenplan-konfliktpruefung"><i class="fas fa-exclamation-triangle"></i>Stundenplan Konfliktprüfung</a>
+                </div>
+            `;
+            break;
+        case 'klassen-verwaltung':
+            subMenuHtml = `
+                <div class="button-grid">
+                    <a href="#" data-action="klasse-hinzufuegen"><i class="fas fa-door-open"></i>Klasse Hinzufügen</a>
+                    <a href="#" data-action="klasse-aktualisieren"><i class="fas fa-edit"></i>Klasse Aktualisieren</a>
+                    <a href="#" data-action="klasse-loeschen"><i class="fas fa-door-closed"></i>Klasse Löschen</a>
+                    <a href="#" data-action="klassenlehrer-zuweisen"><i class="fas fa-user-tie"></i>Klassenlehrer Zuweisen</a>
+                </div>
+            `;
+            break;
+        case 'eltern-verwaltung':
+            subMenuHtml = `
+                <div class="button-grid">
+                    <a href="#" data-action="eltern-hinzufuegen"><i class="fas fa-user-friends"></i>Elternteil Hinzufügen</a>
+                    <a href="#" data-action="eltern-aktualisieren"><i class="fas fa-user-friends"></i>Elternteil Aktualisieren</a>
+                    <a href="#" data-action="eltern-loeschen"><i class="fas fa-user-friends"></i>Elternteil Löschen</a>
+                </div>
+            `;
+            break;
+        case 'mitteilungen':
+            subMenuHtml = `
+                <div class="button-grid">
+                    <a href="#" data-action="mitteilung-hinzufuegen"><i class="fas fa-bullhorn"></i>Mitteilung Hinzufügen</a>
+                    <a href="#" data-action="allgemeine-mitteilungen"><i class="fas fa-bullhorn"></i>Allgemeine Mitteilungen</a>
+                    <a href="#" data-action="personelle-mitteilungen"><i class="fas fa-bullhorn"></i>Personelle Mitteilungen</a>
+                    <a href="#" data-action="mitteilung-aktualisieren"><i class="fas fa-edit"></i>Mitteilung Aktualisieren</a>
+                    <a href="#" data-action="mitteilung-loeschen"><i class="fas fa-trash-alt"></i>Mitteilung Löschen</a>
+                </div>
+            `;
+            break;
+        case 'berechtigungen':
+            subMenuHtml = `
+                <div class="button-grid">
+                    <a href="#" data-action="rollenbasierte-berechtigungen"><i class="fas fa-user-shield"></i>Rollenbasierte Berechtigungen</a>
+                    <a href="#" data-action="benutzerbasierte-berechtigungen"><i class="fas fa-user-shield"></i>Benutzerbasierte Berechtigungen</a>
+                </div>
+            `;
+            break;
+        default:
+            subMenuHtml = '<p>Inhalt ist derzeit nicht verfügbar.</p>';
+            break;
+    }
+
+    reverseAnimateContent(() => {
+        contentArea.innerHTML = subMenuHtml;
+        animateContent(() => {
+            setupSubButtonListeners();
+        });
+    });
+}
+
+function setupSubButtonListeners() {
+    const contentArea = document.getElementById('content-area');
+    const subButtons = contentArea.querySelectorAll('.button-grid a');
+
+    subButtons.forEach(function(button) {
+        button.addEventListener('click', function(e) {
+            e.preventDefault();
+            const action = this.getAttribute('data-action');
+            loadContentByAction(action);
+        });
+    });
+}
+
+function loadContentByAction(action) {
+    const contentArea = document.getElementById('content-area');
+    let contentUrl = '';
+
+    switch (action) {
+        case 'lehrer-hinzufuegen':
+            contentUrl = '../pages/form_add_teacher.php';
+            break;
+        case 'lehrer-loeschen':
+            contentUrl = '../pages/form_delete_teacher.php';
+            break;
+        case 'lehrer-aktualisieren':
+            contentUrl = '../pages/form_update_teacher.php';
+            break;
+        case 'lehrer-liste':
+            contentUrl = '../pages/form_list_teacher.php';
+            break;
+        case 'lehrer-unterricht-zuweisen':
+            contentUrl = '../pages/form_assign_teacher.php';
+            break;
+        case 'schueler-hinzufuegen':
+            contentUrl = '../pages/form_add_student.php';
+            break;
+        case 'schueler-loeschen':
+            contentUrl = '../pages/form_delete_student.php';
+            break;
+        case 'schueler-aktualisieren':
+            contentUrl = '../pages/form_update_student.php';
+            break;
+        case 'schueler-liste':
+            contentUrl = '../pages/form_list_student.php';
+            break;
+        case 'schueler-noten-bearbeiten':
+            contentUrl = '../pages/form_manage_grades.php';
+            break;
+        case 'schueler-anwesenheit':
+            contentUrl = '../pages/form_attendance_student.php';
+            break;
+        case 'unterricht-hinzufuegen':
+            contentUrl = '../pages/form_add_course.php';
+            break;
+        case 'unterricht-loeschen':
+            contentUrl = '../pages/form_delete_course.php';
+            break;
+        case 'unterricht-aktualisieren':
+            contentUrl = '../pages/form_update_course.php';
+            break;
+        case 'unterricht-liste':
+            contentUrl = '../pages/form_list_courses.php';
+            break;
+        case 'stundenplan-hinzufuegen':
+            contentUrl = '../pages/form_add_schedule.php';
+            break;
+        case 'stundenplan-loeschen':
+            contentUrl = '../pages/form_delete_schedule.php';
+            break;
+        case 'stundenplan-aktualisieren':
+            contentUrl = '../pages/form_update_schedule.php';
+            break;
+        case 'stundenplan-liste':
+            contentUrl = '../pages/form_list_schedules.php';
+            break;
+        case 'stundenplan-konfliktpruefung':
+            contentUrl = '../pages/form_check_schedule_conflict.php';
+            break;
+        case 'klasse-hinzufuegen':
+            contentUrl = '../pages/form_add_class.php';
+            break;
+        case 'klasse-loeschen':
+            contentUrl = '../pages/form_delete_class.php';
+            break;
+        case 'klasse-aktualisieren':
+            contentUrl = '../pages/form_update_class.php';
+            break;
+        case 'klassenlehrer-zuweisen':
+            contentUrl = '../pages/form_assign_class_teacher.php';
+            break;
+        case 'eltern-hinzufuegen':
+            contentUrl = '../pages/form_add_parent.php';
+            break;
+        case 'eltern-loeschen':
+            contentUrl = '../pages/form_delete_parent.php';
+            break;
+        case 'eltern-aktualisieren':
+            contentUrl = '../pages/form_update_parent.php';
+            break;
+        case 'mitteilung-hinzufuegen':
+            contentUrl = '../pages/form_add_announcement.php';
+            break;
+        case 'allgemeine-mitteilungen':
+            contentUrl = '../pages/form_list_announcements.php';
+            break;
+        case 'personelle-mitteilungen':
+            contentUrl = '../pages/form_list_staff_announcements.php';
+            break;
+        case 'mitteilung-loeschen':
+            contentUrl = '../pages/form_delete_announcement.php';
+            break;
+        case 'mitteilung-aktualisieren':
+            contentUrl = '../pages/form_update_announcement.php';
+            break;
+        case 'rollenbasierte-berechtigungen':
+            contentUrl = '../pages/form_role_based_auth.php';
+            break;
+        case 'benutzerbasierte-berechtigungen':
+            contentUrl = '../pages/form_user_based_auth.php';
+            break;
+        default:
+            contentArea.innerHTML = '<p>Inhalt ist derzeit nicht verfügbar.</p>';
+            return;
+    }
+
+    if (contentUrl) {
+        fetch(contentUrl)
+            .then(response => response.text())
+            .then(html => {
+                contentArea.innerHTML = html;
+                setupFormSubmitListener(); // Listener nach dem Laden des Formulars erneut setzen
+            })
+            .catch(error => {
+                contentArea.innerHTML = `<p>Fehler beim Laden des Inhalts: ${error.message}</p>`;
+            });
+    }
+}
+
+function setupFormSubmitListener() {
+    const teacherForm = document.querySelector('.teacher-form');
+
+    if (teacherForm) {
+        teacherForm.removeEventListener('submit', formSubmitHandler);
+        teacherForm.addEventListener('submit', formSubmitHandler);
+    }
+}
+
+function formSubmitHandler(e) {
+    e.preventDefault(); // Standard-Formularsendung verhindern
+
+    let formData = new FormData(this);
+
+    fetch('form_add_teacher.php', {
+        method: 'POST',
+        body: formData
+    })
+    .then(response => response.text())
+    .then(result => {
+        document.getElementById('content-area').innerHTML = result;
+        setupFormSubmitListener(); // Listener nach dem Neuladen des Formulars erneut setzen
+    })
+    .catch(error => {
+        console.error('Fehler:', error);
+    });
+}
+
+function animateContent(callback) {
+    const items = document.querySelectorAll('.button-grid a');
+    items.forEach((item, index) => {
+        setTimeout(() => {
+            item.classList.add('show');
+            if (index === items.length - 1 && typeof callback === 'function') {
+                setTimeout(callback, 100);
+            }
+        }, index * 100);
+    });
+}
+
+function reverseAnimateContent(callback) {
+    const items = document.querySelectorAll('.button-grid a.show');
+    const totalItems = items.length;
+
+    if (totalItems === 0) {
+        if (typeof callback === 'function') {
+            callback();
+        }
+        return;
+    }
+
+    const delay = 100;
+
+    for (let i = totalItems - 1; i >= 0; i--) {
+        setTimeout(() => {
+            items[i].classList.remove('show');
+            items[i].style.pointerEvents = 'none';
+
+            if (i === 0 && typeof callback === 'function') {
+                setTimeout(callback, delay);
+            }
+        }, (totalItems - 1 - i) * delay);
+    }
+}
+
+document.addEventListener('DOMContentLoaded', function() {
+    const menuButton = document.getElementById('menu-button');
+    const sidebar = document.querySelector('.sidebar');
+
+    if (menuButton && sidebar) {
+        // Menü-Button Klickereignis zur Anzeige/Verbergung der Sidebar
+        menuButton.addEventListener('click', function(e) {
+            e.stopPropagation(); // Event-Verbreitung verhindern
+            sidebar.classList.toggle('open');
+        });
+
+        // Klick auf beliebige Stelle außerhalb der Sidebar, um sie zu verbergen
+        document.addEventListener('click', function(e) {
+            if (!sidebar.contains(e.target) && !menuButton.contains(e.target)) {
+                sidebar.classList.remove('open');
+            }
+        });
+    }
+
+    // Schließen der Sidebar bei Klick auf ein Menüelement
+    document.querySelectorAll('.sidebar ul.menu li a').forEach(function(menuItem) {
+        menuItem.addEventListener('click', function() {
+            sidebar.classList.remove('open');
+        });
+    });
+});
+
+// Zusätzliche Menü-JS-Code hier...
+
+// Zeitüberschreitungsüberprüfungscode:
+let timeout;
+
+function startTimeout() {
+    timeout = setTimeout(() => {
+        alert("Ihre Sitzung ist abgelaufen. Bitte melden Sie sich erneut an.");
+        window.location.href = "../pages/user_login.php";
+    }, 5 * 60 * 1000); // 5 Minuten (300.000 ms)
+}
+
+function resetTimeout() {
+    clearTimeout(timeout);
+    startTimeout();
+}
+
+// Starten/Zurücksetzen des Timers bei Seitenladevorgang oder Benutzereingaben
+window.onload = startTimeout;
+document.onmousemove = resetTimeout;
+document.onkeydown = resetTimeout;
+
+
+
+
+
+################### 15)PASSWORD_VALIDATION.JS #######################
+
+
+document.getElementById('new_password').addEventListener('input', validatePassword);
+document.getElementById('confirm_password').addEventListener('input', validatePassword);
+
+function validatePassword() {
+    const password = document.getElementById('new_password').value;
+    const confirmPassword = document.getElementById('confirm_password').value;
+
+    // Regeln
+    const lengthRule = document.getElementById('length-rule');
+    const lowercaseRule = document.getElementById('lowercase-rule');
+    const uppercaseRule = document.getElementById('uppercase-rule');
+    const symbolRule = document.getElementById('symbol-rule');
+    const numberRule = document.getElementById('number-rule');
+    const matchRule = document.getElementById('match-rule');
+
+    // Passwortüberprüfung
+    let isLengthValid = password.length >= 10;
+    let isLowercaseValid = /[a-z]/.test(password);
+    let isUppercaseValid = /[A-Z]/.test(password);
+    let isSymbolValid = /[\W]/.test(password); // Sonderzeichen
+    let isNumberValid = /\d/.test(password);
+    let isMatchValid = password === confirmPassword;
+
+    // Regeln entsprechend dem Zustand aktualisieren
+    updateRuleState(lengthRule, isLengthValid);
+    updateRuleState(lowercaseRule, isLowercaseValid);
+    updateRuleState(uppercaseRule, isUppercaseValid);
+    updateRuleState(symbolRule, isSymbolValid);
+    updateRuleState(numberRule, isNumberValid);
+    updateRuleState(matchRule, isMatchValid);
+
+    // Überprüfung, ob alle Regeln gültig sind
+    const isFormValid = isLengthValid && isLowercaseValid && isUppercaseValid && isSymbolValid && isNumberValid && isMatchValid;
+
+    // Button aktivieren oder deaktivieren
+    document.getElementById('submit-button').disabled = !isFormValid;
+}
+
+function updateRuleState(ruleElement, isValid) {
+    if (isValid) {
+        ruleElement.classList.remove('invalid');
+        ruleElement.classList.add('valid');
+    } else {
+        ruleElement.classList.remove('valid');
+        ruleElement.classList.add('invalid');
+    }
+}
+
+// Passwort ein-/ausblenden
+document.querySelectorAll('.toggle-password').forEach(item => {
+    item.addEventListener('click', function () {
+        const target = this.previousElementSibling;
+        if (target.type === 'password') {
+            target.type = 'text';
+            this.classList.remove('fa-eye');
+            this.classList.add('fa-eye-slash');
+        } else {
+            target.type = 'password';
+            this.classList.remove('fa-eye-slash');
+            this.classList.add('fa-eye');
+        }
+    });
+});
+
+
+
+(CSS KLASÖRÜNDEKILER)
+
+
+
+################### 16)CONTENT.CSS ################
+
+
+.content {
+    flex-grow: 1;
+    padding: 20px;
+    background-color: #e9ecef;
+    margin-left: 20px;
+    border-radius: 5px;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.2);
+}
+
+.button-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+    gap: 20px;
+}
+
+.button-grid a {
+    display: block;
+    padding: 20px;
+    background-color: #007bff;
+    color: white;
+    text-align: center;
+    text-decoration: none;
+    border-radius: 5px;
+    font-size: 16px;
+    transition: background-color 0.3s ease;
+    box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+}
+
+.button-grid a:hover {
+    background-color: #C6D0F8;
+}
+
+.button-grid a i {
+    display: block;
+    font-size: 40px;
+    margin-bottom: 10px;
+}
+
+.button-grid a {
+    opacity: 0;
+    transform: translateY(-20px);
+    transition: opacity 0.3s ease, transform 0.3s ease;
+}
+
+.button-grid a.show {
+    opacity: 1;
+    transform: translateY(0);
+}
+
+.veli-icon-wrapper {
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    width: 100%;
+}
+
+.veli-icon-wrapper i {
+    margin-right: 5px;
+}
+/* Küçük ikon boyutlandırması */
+.veli-icon-wrapper i.small-icon {
+    font-size: 20px !important; /* Küçük ikon boyutunu belirler */
+}
+
+.small-icon {
+    font-size: 0.5em;
+    margin-left: 5px;
+    vertical-align: middle;
+}
+/* Başlangıçta içerik görünmez ve yukarıdan aşağıya doğru hafif bir hareketle gelir */
+.content-transition {
+    opacity: 0;
+    transform: translateY(-20px);
+    transition: opacity 0.5s ease, transform 0.5s ease;
+}
+
+/* Yüklendikten sonra içerik tam görünür hale gelir ve hareket sıfırlanır */
+.content-transition.show {
+    opacity: 1;
+    transform: translateY(0);
+}
+.wrapper {
+    display: flex;
+    flex-direction: column;
+    height: 100vh;
+}
+
+#content-area {
+    flex: 1; /* İçerik alanı esnek olacak ve artan boşluğu kaplayacak */
+    overflow-y: auto;
+    transition: min-height 0.5s ease;
+}
+
+form_add_teacher.css
+.teacher-form {
+    display: grid;
+    gap: 15px;
+    max-width: 600px;
+    margin: 0 auto;
+    padding: 20px;
+    background-color: #f9f9f9;
+    border-radius: 8px;
+    box-shadow: 0 4px 8px rgba(0, 0, 0, 0.1);
+}
+
+.teacher-form .form-group {
+    display: flex;
+    flex-direction: column;
+}
+
+.teacher-form label {
+    margin-bottom: 5px;
+    font-weight: bold;
+}
+
+.teacher-form input[type="text"],
+.teacher-form input[type="email"],
+.teacher-form input[type="tel"],
+.teacher-form input[type="date"],
+.teacher-form input[type="password"] {
+    padding: 10px;
+    border: 1px solid #ddd;
+    border-radius: 5px;
+    font-size: 16px;
+}
+
+.teacher-form .checkbox-group {
+    display: flex;
+    flex-direction: column;
+}
+
+.teacher-form .checkbox-group label {
+    margin-bottom: 5px;
+}
+
+.btn-submit {
+    padding: 10px 20px;
+    background-color: #007bff;
+    color: white;
+    border: none;
+    border-radius: 5px;
+    font-size: 16px;
+    cursor: pointer;
+}
+
+.btn-submit:hover {
+    background-color: #0056b3;
+}
+
+reset_link.css
+body {
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    height: 100vh;
+    margin: 0;
+    background-color: #f8f9fa;
+    color: #333;
+    font-family: 'Arial', sans-serif;
+}
+
+.container {
+    background: #ffffff;
+    padding: 30px;
+    border-radius: 8px;
+    box-shadow: 0 4px 15px rgba(0, 0, 0, 0.1);
+    text-align: center;
+    max-width: 350px;
+    width: 100%;
+}
+
+.container h2 {
+    margin-bottom: 20px;
+    font-size: 20px;
+    color: #333;
+}
+
+.form-floating {
+    margin-bottom: 20px;
+    position: relative;
+}
+
+.form-floating input {
+    border: 1px solid #ced4da;
+    border-radius: 4px;
+    padding: 10px 15px;
+    width: 100%;
+    box-shadow: 0 2px 5px rgba(0, 0, 0, 0.05);
+}
+
+.btn-primary {
+    background: #007bff;
+    border: none;
+    border-radius: 4px;
+    padding: 10px 20px;
+    cursor: pointer;
+    transition: background 0.3s;
+    font-size: 16px;
+}
+
+.btn-primary:hover {
+    background: #0056b3;
+}
+
+
+
+
+
+################### 17)FORM_ADD_TEACHER.CSS ################
+
+
+.teacher-form {
+    display: grid;
+    gap: 15px;
+    max-width: 600px;
+    margin: 0 auto;
+    padding: 20px;
+    background-color: #f9f9f9;
+    border-radius: 8px;
+    box-shadow: 0 4px 8px rgba(0, 0, 0, 0.1);
+}
+
+.teacher-form .form-group {
+    display: flex;
+    flex-direction: column;
+}
+
+.teacher-form label {
+    margin-bottom: 5px;
+    font-weight: bold;
+}
+
+.teacher-form input[type="text"],
+.teacher-form input[type="email"],
+.teacher-form input[type="tel"],
+.teacher-form input[type="date"],
+.teacher-form input[type="password"] {
+    padding: 10px;
+    border: 1px solid #ddd;
+    border-radius: 5px;
+    font-size: 16px;
+}
+
+.teacher-form .checkbox-group {
+    display: flex;
+    flex-direction: column;
+}
+
+.teacher-form .checkbox-group label {
+    margin-bottom: 5px;
+}
+
+.btn-submit {
+    padding: 10px 20px;
+    background-color: #007bff;
+    color: white;
+    border: none;
+    border-radius: 5px;
+    font-size: 16px;
+    cursor: pointer;
+}
+
+.btn-submit:hover {
+    background-color: #0056b3;
+}
+
+
+
+
+
+
+################### 18)RESET_LINK.CSS #########################
+
+
+body {
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    height: 100vh;
+    margin: 0;
+    background-color: #f8f9fa;
+    color: #333;
+    font-family: 'Arial', sans-serif;
+}
+
+.container {
+    background: #ffffff;
+    padding: 30px;
+    border-radius: 8px;
+    box-shadow: 0 4px 15px rgba(0, 0, 0, 0.1);
+    text-align: center;
+    max-width: 350px;
+    width: 100%;
+}
+
+.container h2 {
+    margin-bottom: 20px;
+    font-size: 20px;
+    color: #333;
+}
+
+.form-floating {
+    margin-bottom: 20px;
+    position: relative;
+}
+
+.form-floating input {
+    border: 1px solid #ced4da;
+    border-radius: 4px;
+    padding: 10px 15px;
+    width: 100%;
+    box-shadow: 0 2px 5px rgba(0, 0, 0, 0.05);
+}
+
+.btn-primary {
+    background: #007bff;
+    border: none;
+    border-radius: 4px;
+    padding: 10px 20px;
+    cursor: pointer;
+    transition: background 0.3s;
+    font-size: 16px;
+}
+
+.btn-primary:hover {
+    background: #0056b3;
+}
+
+
+
+
+
+
+
+
+################### 19)RESET_PASSWORD.CSS #######################
+
+body {
+    font-family: 'Poppins', sans-serif;
+    background-color: #f4f7f6;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    height: 100vh;
+    margin: 0;
+}
+
+.container {
+    background-color: #ffffff;
+    padding: 40px;
+    border-radius: 8px;
+    box-shadow: 0 4px 8px rgba(0, 0, 0, 0.1);
+    max-width: 400px;
+    width: 100%;
+    box-sizing: border-box;
+}
+
+h2 {
+    text-align: center;
+    color: #333333;
+    margin-bottom: 20px;
+    font-size: 24px;
+}
+
+.form-floating {
+    position: relative;
+    margin-bottom: 20px;
+}
+
+/* Breite und Padding für die Passwortfelder festgelegt */
+.form-floating input[type="password"], .form-floating input[type="text"] {
+    width: 100%;
+    padding: 10px;
+    font-size: 16px;
+    border: 1px solid #dddddd;
+    border-radius: 4px;
+    box-sizing: border-box;
+    padding-right: 40px; /* Platz für das Augensymbol rechts */
+}
+
+/* Sicherstellen, dass das Label nicht verschoben wird, wenn auf das Auge geklickt wird */
+.form-floating input[type="password"]:focus ~ label,
+.form-floating input[type="text"]:focus ~ label,
+.form-floating input[type="password"]:not(:placeholder-shown) ~ label,
+.form-floating input[type="text"]:not(:placeholder-shown) ~ label,
+.form-floating:focus-within label {
+    top: -10px;
+    left: 12px;
+    font-size: 12px;
+    color: #007bff;
+}
+
+.form-floating label {
+    position: absolute;
+    top: 50%;
+    left: 12px;
+    transform: translateY(-50%);
+    font-size: 16px;
+    color: #666666;
+    pointer-events: none;
+    transition: all 0.3s ease;
+}
+
+.form-floating input[type="password"]:focus ~ label,
+.form-floating input[type="password"]:not(:placeholder-shown) ~ label {
+    top: -10px;
+    left: 12px;
+    font-size: 12px;
+    color: #007bff;
+}
+
+.toggle-password {
+    position: absolute;
+    right: 10px;
+    top: 50%;
+    transform: translateY(-50%);
+    cursor: pointer;
+    color: #6c757d;
+    font-size: 1.2em;
+}
+
+.password-rules {
+    margin-bottom: 20px;
+    padding: 10px;
+    border: 1px solid #ddd;
+    border-radius: 4px;
+    background-color: #f9f9f9;
+}
+
+.password-rules p {
+    margin: 5px 0;
+    font-size: 14px;
+    display: flex;
+    align-items: center;
+}
+
+.password-rules p::before {
+    content: "\2717"; /* Kreuz-Symbol */
+    color: #ff0000;
+    margin-right: 10px;
+    font-weight: bold;
+    transition: color 0.3s ease;
+}
+
+.password-rules .valid::before {
+    content: "\2713"; /* Häkchen-Symbol */
+    color: #28a745;
+}
+
+button {
+    width: 100%;
+    padding: 12px;
+    background-color: #007bff;
+    color: #ffffff;
+    font-size: 16px;
+    font-weight: bold;
+    border: none;
+    border-radius: 4px;
+    cursor: pointer;
+    transition: background-color 0.3s ease;
+}
+
+button:disabled {
+    background-color: #cccccc;
+    cursor: not-allowed;
+}
+
+button:hover:enabled {
+    background-color: #0056b3;
+}
+
+/* Fehlermeldung */
+.error {
+    color: #ff0000;
+    margin-bottom: 20px;
+    text-align: center;
+}
+
+
+
+
+################### 20)SIDEBAR.CSS ###################
+
+.sidebar {
+    width: auto; /* Feste Breite entfernt */
+    background-color: #f8f9fa;
+    padding: 20px;
+    box-shadow: inset -2px 0 5px rgba(0, 0, 0, 0.1), 2px 0 5px rgba(0, 0, 0, 0.1);
+    white-space: nowrap; /* Text in einer Zeile belassen */
+}
+
+.sidebar ul.menu li.item {
+    margin-bottom: 10px;
+}
+
+.sidebar ul.menu li.item a {
+    display: flex;
+    align-items: center;
+    padding: 10px;
+    background-color: #f8f9fa;
+    color: black;
+    text-decoration: none;
+    border-radius: 5px;
+    text-align: left;
+    font-size: 16px;
+    transition: background-color 0.3s ease;
+}
+
+
+.sidebar ul.menu li.item a span {
+    flex-grow: 1;
+}
+
+
+.sidebar ul.menu li.item a i {
+    width: 30px; /* Sabit genişlik */
+    text-align: center; /* İkonları ortalar */
+    margin-right: 10px; /* İkon ile metin arasındaki boşluk */
+}
+
+/* Menülisten */
+.sidebar ul.menu {
+    list-style-type: none;
+    padding: 0;
+}
+
+.sidebar ul.menu li.item a span {
+    flex-grow: 1;
+}
+
+.sidebar ul.menu li.item a:hover {
+    background-color: #F2EBEB;
+}
+
+/* Für Mobilgeräte */
+@media (max-width: 768px) {
+    .sidebar {
+        transform: translateX(-100%); /* Sidebar initial versteckt */
+        position: fixed;
+        left: 0;
+        top: 120px; /* Ausrichtung mit Menübutton */
+        height: 450px; /* Flexiblere Höhe */
+        width: 250px; /* Breite angepasst */
+        transition: transform 0.3s ease; /* Sanftes Ein- und Ausblenden */
+        z-index: 9999; /* Sidebar nach vorne bringen */
+        box-shadow: inset -2px 0 5px rgba(0, 0, 0, 0.1), 2px 0 5px rgba(0, 0, 0, 0.1);
+    }
+
+    .sidebar.open {
+        transform: translateX(0); /* Sidebar sichtbar */
+    }
+
+    .sidebar h2 {
+        display: none;
+    }
+}
+
+
+
+################### 21)STYLE_WEB.CSS ###################
+
+/* Allgemeine Stilvorgaben */
+body {
+    font-family: 'Arial', sans-serif;
+    margin: 0;
+    padding: 0;
+    background-color: #f0f0f0;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    min-height: 100vh;
+}
+
+.top-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    width: 100%;
+    background-color: #3b77ac;
+    color: white;
+    padding: 10px 20px;
+    position: fixed;
+    top: 0;
+    left: 0;
+    z-index: 1000;
+    box-shadow: 0px 2px 4px rgba(0, 0, 0, 0.1);
+}
+
+.school-logo {
+    height: 50px;
+}
+
+.user-info {
+    font-size: 16px;
+    margin-left: auto;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    max-width: 300px;
+    text-align: right;
+}
+
+.wrapper {
+    width: 100%;
+    margin-top: 120px;
+    max-width: 1200px;
+    background-color: #ffffff;
+    min-height: calc(100vh - 120px);
+    display: flex;
+    flex-direction: column;
+    padding: 0px;
+    border-radius: 15px;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.2);
+}
+
+.page-title {
+    text-align: center;
+    color: #1a60b5;
+    font-size: 24px;
+    margin: 20px 0;
+    font-weight: bold;
+}
+
+.main-container {
+    display: flex;
+    flex-grow: 1;
+    margin: 0;
+    box-shadow: inset 0px 0px 5px rgba(0, 0, 0, 0.2);
+    border-radius: 15px;
+    border: 1px solid #d0d0d0;
+}
+
+.content {
+    flex-grow: 1;
+    background-color: #e3f2fd;
+    padding: 20px;
+    border-radius: 0 0px 10px 0;
+    box-shadow: inset 2px 0 5px rgba(0, 0, 0, 0.1), -2px 0 5px rgba(0, 0, 0, 0.1);
+    border-left: 1px solid #d0d0d0;
+}
+
+#menu-button {
+    display: none; /* Menü-Button standardmäßig ausgeblendet */
+}
+
+/* Stil für mobile Geräte */
+@media (max-width: 768px) {
+    #menu-button {
+        display: block;
+        position: fixed;
+        top: 90px;
+        left: 10px;
+        background-color: #5A5A5A; /* Dunklere Farbe für Button */
+        color: white;
+        padding: 10px;
+        border: none;
+        cursor: pointer;
+        z-index: 1100;
+        width: 60px;
+        height: 30px;
+        font-size: 14px;
+        font-weight: bold;
+        line-height: 15px; /* Text vertikal zentrieren */
+        text-align: center; /* Text horizontal zentrieren */
+        box-shadow: 0 4px 6px rgba(0, 0, 0, 0.3); /* 3D-Effekt */
+        border-radius: 8px; /* Abgerundete Ecken */
+        background-image: linear-gradient(to bottom, #6E6E6E, #3B3B3B); /* 3D-Effekt durch Verlauf */
+    }
+
+    .top-header, .header, .main-container {
+        flex-direction: column;
+    }
+}
+
+
+
+
+################### 22)USER_LOGIN.CSS #####################
+
+/* Allgemeines Layout für die Login-Seite */
+#login-page {
+    margin: 0;
+    padding: 0;
+    font-family: Arial, sans-serif;
+    height: 100%;
+    background-color: #f0f0f0;
+}
+
+/* Container für die Login-Seite */
+#login-page .container {
+    display: flex;
+    height: 100vh;
+    flex-direction: row;
+}
+
+/* Linke Seite (Bild) */
+.left-side {
+    flex: 1;
+    background-color: #ececec;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+}
+
+/* Bildanpassung */
+.login-image {
+    max-width: 100%;
+    max-height: 100%;
+    object-fit: cover;
+}
+
+/* Rechte Seite (Logo und Login-Formular) */
+.right-side {
+    flex: 1;
+    background-color: #ffffff;
+    position: relative;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    flex-direction: column;
+}
+
+/* Logo-Container */
+.logo-container {
+    width: 100%;
+    text-align: center;
+    margin-top: 50px;
+}
+
+/* Logo-Bild */
+.logo-image {
+    max-width: 150px;
+    height: auto;
+}
+
+/* Login-Formular-Container */
+.login-form-container {
+    width: 80%;
+    max-width: 400px;
+    background-color: #ffffff;
+    padding: 20px;
+    box-shadow: 0 0 15px rgba(0, 0, 0, 0.1);
+    border-radius: 8px;
+    text-align: center;
+    margin-top: 20px;
+}
+
+/* Überschrift für das Formular */
+.login-form-container h2 {
+    margin-bottom: 20px;
+    font-size: 24px;
+    color: #333;
+}
+
+/* Eingabefelder im Formular */
+.input-group {
+    margin-bottom: 15px;
+    text-align: left;
+}
+
+.input-group label {
+    display: block;
+    font-weight: bold;
+    margin-bottom: 5px;
+    color: #555;
+}
+
+.input-group input {
+    width: 100%;
+    padding: 10px;
+    font-size: 16px;
+    border: 1px solid #ccc;
+    border-radius: 4px;
+}
+
+/* Link für „Passwort vergessen“ */
+.forgot-password {
+    text-align: right;
+    margin-bottom: 20px;
+}
+
+.forgot-password a {
+    text-decoration: none;
+    color: #0066cc;
+    font-size: 14px;
+}
+
+.form-check-label {
+    font-size: 12px;
+    color: #6c757d;
+    margin-left: 5px;
+    padding-top: 4px;
+}
+
+.form-check {
+    display: flex;
+    align-items: center;
+}
+
+/* Button zum Einloggen */
+.login-button {
+    width: 100%;
+    padding: 12px;
+    font-size: 16px;
+    color: #ffffff;
+    background-color: #0066cc;
+    border: none;
+    border-radius: 4px;
+    cursor: pointer;
+    transition: background-color 0.3s ease;
+}
+
+.login-button:hover {
+    background-color: #005bb5;
+}
+
+.alert {
+    padding: 15px;
+    margin-bottom: 20px;
+    border: 1px solid transparent;
+    border-radius: 4px;
+    font-size: 14px;
+    text-align: center;
+}
+
+.alert-danger {
+    color: #a94442;
+    background-color: #f2dede;
+    border-color: #ebccd1;
+}
+
+/* Media Queries */
+
+/* Für Bildschirme mit einer Breite von 768px oder kleiner (Handys) */
+@media (max-width: 768px) {
+
+    /* Layout für linke und rechte Seite auf Mobilgeräten */
+    #login-page .container {
+        flex-direction: column;
+    }
+
+    /* Linke Seite */
+    .left-side {
+        width: 100%;
+        height: auto;
+    }
+
+    /* Rechte Seite */
+    .right-side {
+        width: 100%;
+        height: auto;
+    }
+
+    /* Logo-Container */
+    .logo-container {
+        margin-top: 20px;
+		height:auto;
+    }
+}
+
+#role-selection-page {
+    background-color: #a2c2e0;
+    font-family: Arial, sans-serif;
+    margin: 0;
+    padding: 0;
+    height: 100vh;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+}
+
+/* Container für die Rolle-Seite */
+#role-selection-page .container {
+    background-color: #b4d8a6;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    height: 100vh;
+    width: 80vw;
+    gap: 20px;
+    flex-wrap: wrap;
+    padding: 30px;
+    box-sizing: border-box;
+    border-radius: 15px;
+    box-shadow: 0px 12px 25px rgba(0, 0, 0, 0.4);
+}
+
+/* Stil für die runden Optionen */
+.role-option {
+    background-color: #f5a623;
+    color: #fff;
+    border-radius: 50%;
+    box-shadow: 0 4px 8px rgba(0, 0, 0, 0.2);
+    text-align: center;
+    padding: 20px;
+    width: 150px;
+    height: 150px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    transition: transform 0.3s ease;
+    margin: 20px;
+    position: relative;
+}
+
+/* Hover-Effekt für die runden Optionen */
+.role-option:hover {
+    transform: scale(1.1);
+}
+
+/* Stil für das Bild innerhalb der runden Optionen */
+.role-option img {
+    max-width: 90%;
+    height: auto;
+}
+
+/* Stil für die Rollen-Namen unter den runden Optionen */
+.role-option h3 {
+    margin-top: 10px;
+    position: absolute;
+    bottom: -30px;
+    width: 100%;
+    font-size: 18px;
+}
+
+.toggle-password {
+    position: absolute;
+    right: 20px;
+    top: 50%;
+    transform: translateY(-50%);
+    cursor: pointer;
+    color: #6c757d;
+}
+
+.toggle-password i {
+    font-size: 1.2em;
+}
+
+/* Media Queries für die Rolle-Seite (768px oder kleiner) */
+@media (max-width: 768px) {
+
+    /* Container für die Rolle-Seite */
+    #role-selection-page .container {
+        height: 200vh;
+    }
+
+    .alert {
+        font-size: 14px;
+        padding: 10px;
+        margin-bottom: 15px;
+        text-align: center;
+    }
+
+    .alert-danger {
+        color: #a94442;
+        background-color: #f2dede;
+        border-color: #ebccd1;
+    }
+}
+
+VERI TABANI TABLOLARI OLUSTURAN TÜM SQL KODLARI:
+-- Roles Tablosu
+CREATE TABLE roles (
+    role_id INT AUTO_INCREMENT PRIMARY KEY,
+    role_name VARCHAR(50) NOT NULL
+);
+
+-- Permissions Tablosu
+CREATE TABLE permissions (
+    permission_id INT AUTO_INCREMENT PRIMARY KEY,
+    permission_name VARCHAR(100) NOT NULL
+);
+
+-- Users Tablosu
+CREATE TABLE users (
+    user_id INT AUTO_INCREMENT PRIMARY KEY,
+    name VARCHAR(100) NOT NULL,
+    surname VARCHAR(100) NOT NULL,
+    email VARCHAR(100) NOT NULL UNIQUE,
+    password VARCHAR(255) NOT NULL,
+    role ENUM('admin', 'teacher', 'student') NOT NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    userkey VARCHAR(255)
+);
+
+
+-- Teachers Tablosu
+CREATE TABLE teachers (
+    teacher_id INT AUTO_INCREMENT PRIMARY KEY,
+    user_id INT NOT NULL,
+    branch VARCHAR(255) NOT NULL,
+    additional_branch VARCHAR(255),
+    birth_date DATE,
+    phone_number_1 VARCHAR(15),
+    phone_number_2 VARCHAR(15),
+    email VARCHAR(255) NOT NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    CONSTRAINT fk_teachers_user_id FOREIGN KEY (user_id) REFERENCES users(user_id) ON DELETE CASCADE
+);
+
+-- Classes Tablosu
+CREATE TABLE classes (
+    class_id INT AUTO_INCREMENT PRIMARY KEY,
+    class_name VARCHAR(50) NOT NULL,
+    teacher_id INT,
+    CONSTRAINT fk_classes_teacher_id FOREIGN KEY (teacher_id) REFERENCES teachers(teacher_id) ON DELETE SET NULL
+);
+
+-- Parents Tablosu
+CREATE TABLE parents (
+    parent_id INT AUTO_INCREMENT PRIMARY KEY,
+    user_id INT NOT NULL,
+    phone_number VARCHAR(15),
+    email VARCHAR(100) NOT NULL,
+    CONSTRAINT fk_parents_user_id FOREIGN KEY (user_id) REFERENCES users(user_id) ON DELETE CASCADE
+);
+
+-- Students Tablosu
+CREATE TABLE students (
+    student_id INT AUTO_INCREMENT PRIMARY KEY,
+    user_id INT NOT NULL,
+    class_id INT NOT NULL,
+    parent_id INT,
+    relationship_to_student VARCHAR(50),
+    birth_date DATE,
+    phone_number VARCHAR(15),
+    email VARCHAR(100),
+    CONSTRAINT fk_students_user_id FOREIGN KEY (user_id) REFERENCES users(user_id) ON DELETE CASCADE,
+    CONSTRAINT fk_students_parent_id FOREIGN KEY (parent_id) REFERENCES parents(parent_id) ON DELETE SET NULL,
+    CONSTRAINT fk_students_class_id FOREIGN KEY (class_id) REFERENCES classes(class_id) ON DELETE CASCADE
+);
+
+-- Password Resets Tablosu
+CREATE TABLE password_resets (
+    email VARCHAR(255) NOT NULL,
+    token VARCHAR(255) NOT NULL,
+    expires_at TIMESTAMP NOT NULL,
+    PRIMARY KEY (token),
+    CONSTRAINT fk_password_resets_email FOREIGN KEY (email) REFERENCES users(email) ON DELETE CASCADE
+);
+
+-- Grades Tablosu
+CREATE TABLE grades (
+    grade_id INT AUTO_INCREMENT PRIMARY KEY,
+    student_id INT NOT NULL,
+    class_id INT NOT NULL,
+    subject VARCHAR(100) NOT NULL,
+    grade FLOAT NOT NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    CONSTRAINT fk_grades_student_id FOREIGN KEY (student_id) REFERENCES students(student_id) ON DELETE CASCADE,
+    CONSTRAINT fk_grades_class_id FOREIGN KEY (class_id) REFERENCES classes(class_id) ON DELETE CASCADE
+);
+
+-- Assignments Tablosu
+CREATE TABLE assignments (
+    assignment_id INT AUTO_INCREMENT PRIMARY KEY,
+    class_id INT NOT NULL,
+    title VARCHAR(255) NOT NULL,
+    description TEXT,
+    due_date DATE,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    CONSTRAINT fk_assignments_class_id FOREIGN KEY (class_id) REFERENCES classes(class_id) ON DELETE CASCADE
+);
+
+-- Assignment Submissions Tablosu
+CREATE TABLE assignment_submissions (
+    submission_id INT AUTO_INCREMENT PRIMARY KEY,
+    assignment_id INT NOT NULL,
+    student_id INT NOT NULL,
+    submission_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    grade FLOAT,
+    feedback TEXT,
+    CONSTRAINT fk_assignment_submissions_assignment_id FOREIGN KEY (assignment_id) REFERENCES assignments(assignment_id) ON DELETE CASCADE,
+    CONSTRAINT fk_assignment_submissions_student_id FOREIGN KEY (student_id) REFERENCES students(student_id) ON DELETE CASCADE
+);
+
+-- Messages Tablosu
+CREATE TABLE messages (
+    message_id INT AUTO_INCREMENT PRIMARY KEY,
+    sender_id INT NOT NULL,
+    recipient_id INT NOT NULL,
+    subject VARCHAR(255),
+    message_body TEXT NOT NULL,
+    sent_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    is_read BOOLEAN DEFAULT FALSE,
+    CONSTRAINT fk_messages_sender_id FOREIGN KEY (sender_id) REFERENCES users(user_id) ON DELETE CASCADE,
+    CONSTRAINT fk_messages_recipient_id FOREIGN KEY (recipient_id) REFERENCES users(user_id) ON DELETE CASCADE
+);
+
+-- Announcements Tablosu
+CREATE TABLE announcements (
+    announcement_id INT AUTO_INCREMENT PRIMARY KEY,
+    title VARCHAR(255) NOT NULL,
+    content TEXT NOT NULL,
+    created_by INT NOT NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    CONSTRAINT fk_announcements_created_by FOREIGN KEY (created_by) REFERENCES users(user_id) ON DELETE CASCADE
+);
+
+-- Role Permissions Tablosu
+CREATE TABLE role_permissions (
+    role_id INT NOT NULL,
+    permission_id INT NOT NULL,
+    PRIMARY KEY (role_id, permission_id),
+    CONSTRAINT fk_role_permissions_role_id FOREIGN KEY (role_id) REFERENCES roles(role_id) ON DELETE CASCADE,
+    CONSTRAINT fk_role_permissions_permission_id FOREIGN KEY (permission_id) REFERENCES permissions(permission_id) ON DELETE CASCADE
+);
+
+-- User Permissions Tablosu
+CREATE TABLE user_permissions (
+    user_id INT NOT NULL,
+    permission_id INT NOT NULL,
+    PRIMARY KEY (user_id, permission_id),
+    CONSTRAINT fk_user_permissions_user_id FOREIGN KEY (user_id) REFERENCES users(user_id) ON DELETE CASCADE,
+    CONSTRAINT fk_user_permissions_permission_id FOREIGN KEY (permission_id) REFERENCES permissions(permission_id) ON DELETE CASCADE
+);
+
+-- Subjects Tablosu
+CREATE TABLE subjects (
+    subject_id INT AUTO_INCREMENT PRIMARY KEY,
+    subject_name VARCHAR(100) NOT NULL
+);
+
+-- Class Subject Teacher Tablosu
+CREATE TABLE class_subject_teacher (
+    class_subject_teacher_id INT AUTO_INCREMENT PRIMARY KEY,
+    class_id INT NOT NULL,
+    subject_id INT NOT NULL,
+    teacher_id INT NOT NULL,
+    CONSTRAINT fk_cst_class_id FOREIGN KEY (class_id) REFERENCES classes(class_id) ON DELETE CASCADE,
+    CONSTRAINT fk_cst_subject_id FOREIGN KEY (subject_id) REFERENCES subjects(subject_id) ON DELETE CASCADE,
+    CONSTRAINT fk_cst_teacher_id FOREIGN KEY (teacher_id) REFERENCES teachers(teacher_id) ON DELETE CASCADE
+);
+
+-- Login Attempts Tablosu
+CREATE TABLE login_attempts (
+    attempt_id INT AUTO_INCREMENT PRIMARY KEY,
+    user_id INT NOT NULL,
+    attempt_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    ip_address VARCHAR(45),
+    success BOOLEAN DEFAULT FALSE,
+    CONSTRAINT fk_login_attempts_user_id FOREIGN KEY (user_id) REFERENCES users(user_id) ON DELETE CASCADE
+);
+
+-- User Activity Logs Tablosu
+CREATE TABLE user_activity_logs (
+    log_id INT AUTO_INCREMENT PRIMARY KEY,
+    user_id INT NOT NULL,
+    activity_type VARCHAR(100) NOT NULL,
+    activity_details TEXT,
+    activity_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT fk_user_activity_logs_user_id FOREIGN KEY (user_id) REFERENCES users(user_id) ON DELETE CASCADE
+);
+
+-- Schedules Tablosu
+CREATE TABLE schedules (
+    schedule_id INT AUTO_INCREMENT PRIMARY KEY,
+    class_id INT NOT NULL,
+    subject_id INT NOT NULL,
+    teacher_id INT NOT NULL,
+    day_of_week ENUM('Montag', 'Dienstag', 'Mittwoch', 'Donnerstag', 'Freitag', 'Samstag', 'Sonntag') NOT NULL,
+    start_time TIME NOT NULL,
+    end_time TIME NOT NULL,
+    CONSTRAINT fk_schedules_class_id FOREIGN KEY (class_id) REFERENCES classes(class_id) ON DELETE CASCADE,
+    CONSTRAINT fk_schedules_subject_id FOREIGN KEY (subject_id) REFERENCES subjects(subject_id) ON DELETE CASCADE,
+    CONSTRAINT fk_schedules_teacher_id FOREIGN KEY (teacher_id) REFERENCES teachers(teacher_id) ON DELETE CASCADE
+);
+
+
+Zugangsdaten nicht erkannt. Bitte überprüfen Sie Ihre Eingaben und versuchen Sie es erneut.

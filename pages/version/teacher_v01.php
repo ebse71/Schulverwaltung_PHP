@@ -1,0 +1,330 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Admin Paneli</title>
+    <link rel="stylesheet" href="../css/sidebar.css">
+    <link rel="stylesheet" href="../css/content.css">
+    <link rel="stylesheet" href="../css/style_web.css">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0-beta3/css/all.min.css"> <!-- Font Awesome -->
+    <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600&display=swap" rel="stylesheet">
+</head>
+<body>
+    <div class="top-header">
+        <img src="../images/school-logo.png" alt="Okul Logosu" class="school-logo">
+        <div class="user-info">Hoşgeldin, Frau Baumeister und Herr Baumeister</div>
+    </div>
+    <div class="wrapper">
+        <div class="main-container">
+            <button id="menu-button">Menu</button>
+            <!-- Sidebar -->
+            <div class="sidebar">
+                <ul class="menu">
+                    <li class="item"><a href="#" data-content="ogrenci-islemleri"><i class="fas fa-user-graduate" style="color: #28a745;"></i><span>Öğrenci İşlemleri</span></a></li>
+                    <li class="item"><a href="#" data-content="ders-programi-islemleri"><i class="fas fa-calendar-alt" style="color: #17a2b8;"></i><span>Ders Programı İşlemleri</span></a></li>
+                    <li class="item"><a href="#" data-content="duyurular"><i class="fas fa-bullhorn" style="color: #dc3545;"></i><span>Duyurular</span></a></li>
+                    <li class="item"><a href="#" data-content="mesajlar"><i class="fas fa-envelope" style="color: #007bff;"></i><span>Mesajlar</span></a></li>
+                    <li class="item"><a href="#" data-content="kullanici-islemleri"><i class="fas fa-user-cog" style="color: #17a2b8;"></i><span>Kullanıcı İşlemleri</span></a></li>
+                    </ul>
+            </div>
+            
+            <!-- İçerik Alanı -->
+            <div class="content" id="content-area">
+                <p>Lütfen bir menü seçin.</p>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        document.querySelectorAll('.sidebar ul.menu li a').forEach(function(menuItem) {
+            menuItem.addEventListener('click', function(e) {
+                e.preventDefault();
+                const contentId = this.getAttribute('data-content');
+                loadSubMenu(contentId);
+            });
+        });
+
+        function loadSubMenu(contentId) {
+            const contentArea = document.getElementById('content-area');
+            let subMenuHtml = '';
+
+            switch (contentId) {
+                case 'ogrenci-islemleri':
+                    subMenuHtml = `
+                        <div class="button-grid">
+                            <a href="#" data-action="ogrenci-not-islemleri"><i class="fas fa-book"></i>Öğrenci Not İşlemleri</a>
+                            <a href="#" data-action="ogrenci-listesi"><i class="fas fa-list"></i>Öğrenci Listesi</a>
+                            <a href="#" data-action="ogrenci-devamsizlik"><i class="fas fa-calendar-check"></i>Öğrenci Devamsızlık</a>
+                        </div>
+                    `;
+                    break;
+                
+                case 'ders-programi-islemleri':
+                    subMenuHtml = `
+                        <div class="button-grid">
+                          <a href="#" data-action="ders-programi-listesi"><i class="fas fa-calendar"></i>Ders Programı Listesi</a>
+                        </div>
+                    `;
+                    break;
+
+                case 'mesajlar':
+                    subMenuHtml = `
+                        <div class="button-grid">
+                            <a href="#" data-action="mesaj-gönder"><i class="fas fa-paper-plane"></i>Mesaj Gönder</a>
+                            <a href="#" data-action="mesajlari-oku"><i class="fas fa-envelope-open-text"></i>Mesajları Oku</a>
+                        </div>
+                    `;
+                    break;
+                
+                case 'kullanici-islemleri':
+                    subMenuHtml = `
+                        <div class="button-grid">
+                            <a href="#" data-action="bilgileri-güncelle"><i class="fas fa-users-cog"></i>Bilgileri Güncelle</a>
+                            <a href="#" data-action="logout"><i class="fas fa-user-lock"></i>Logout</a>
+</div>
+                    `;
+                    break;
+                default:
+                    subMenuHtml = '<p>Henüz içerik mevcut değil.</p>';
+                    break;
+            }
+
+            reverseAnimateContent(() => {
+                contentArea.innerHTML = subMenuHtml;
+                animateContent(() => {
+                    setupSubButtonListeners();
+                });
+            });
+        }
+
+        function setupSubButtonListeners() {
+            const contentArea = document.getElementById('content-area');
+            const subButtons = contentArea.querySelectorAll('.button-grid a');
+
+            subButtons.forEach(function(button) {
+                button.addEventListener('click', function(e) {
+                    e.preventDefault();
+                    const action = this.getAttribute('data-action');
+                    loadContentByAction(action);
+                });
+            });
+        }
+
+        function loadContentByAction(action) {
+            const contentArea = document.getElementById('content-area');
+            let contentUrl = '';
+
+            switch (action) {
+                case 'ogretmen-ekle':
+                    contentUrl = '../pages/form_add_teacher.php';
+                    break;
+                case 'ogretmen-sil':
+                    contentUrl = '../pages/form_delete_teacher.php';
+                    break;
+                case 'ogretmen-guncelle':
+                    contentUrl = '../pages/form_update_teacher.php';
+                    break;
+                case 'ogretmen-listesi':
+                    contentUrl = '../pages/form_list_teacher.php';
+                    break;
+                case 'ogretmen-ders-atama':
+                    contentUrl = '../pages/form_assign_teacher.php';
+                    break;
+                case 'ogrenci-ekle':
+                    contentUrl = '../pages/form_add_student.php';
+                    break;
+                case 'ogrenci-sil':
+                    contentUrl = '../pages/form_delete_student.php';
+                    break;
+                case 'ogrenci-guncelle':
+                    contentUrl = '../pages/form_update_student.php';
+                    break;
+                case 'ogrenci-listesi':
+                    contentUrl = '../pages/form_list_student.php';
+                    break;
+                case 'ogrenci-not-islemleri':
+                    contentUrl = '../pages/form_manage_grades.php';
+                    break;
+                case 'ogrenci-devamsizlik':
+                    contentUrl = '../pages/form_attendance_student.php';
+                    break;
+                case 'ders-ekle':
+                    contentUrl = '../pages/form_add_course.php';
+                    break;
+                case 'ders-sil':
+                    contentUrl = '../pages/form_delete_course.php';
+                    break;
+                case 'ders-guncelle':
+                    contentUrl = '../pages/form_update_course.php';
+                    break;
+                case 'ders-listesi':
+                    contentUrl = '../pages/form_list_courses.php';
+                    break;
+                case 'ders-programi-ekle':
+                    contentUrl = '../pages/form_add_schedule.php';
+                    break;
+                case 'ders-programi-sil':
+                    contentUrl = '../pages/form_delete_schedule.php';
+                    break;
+                case 'ders-programi-guncelle':
+                    contentUrl = '../pages/form_update_schedule.php';
+                    break;
+                case 'ders-programi-listesi':
+                    contentUrl = '../pages/form_list_schedules.php';
+                    break;
+                case 'ders-programi-cakis-kontrolu':
+                    contentUrl = '../pages/form_check_schedule_conflict.php';
+                    break;
+                case 'sinif-ekle':
+                    contentUrl = '../pages/form_add_class.php';
+                    break;
+                case 'sinif-sil':
+                    contentUrl = '../pages/form_delete_class.php';
+                    break;
+                case 'sinif-guncelle':
+                    contentUrl = '../pages/form_update_class.php';
+                    break;
+                case 'sinif-ogretmeni-atama':
+                    contentUrl = '../pages/form_assign_class_teacher.php';
+                    break;
+                case 'veli-ekle':
+                    contentUrl = '../pages/form_add_parent.php';
+                    break;
+                case 'veli-sil':
+                    contentUrl = '../pages/form_delete_parent.php';
+                    break;
+                case 'veli-guncelle':
+                    contentUrl = '../pages/form_update_parent.php';
+                    break;
+                case 'duyuru-ekle':
+                    contentUrl = '../pages/form_add_announcement.php';
+                    break;
+                case 'genel-duyurular':
+                    contentUrl = '../pages/form_list_announcements.php';
+                    break;
+                case 'personel-duyurulari':
+                    contentUrl = '../pages/form_list_staff_announcements.php';
+                    break;
+                case 'duyuru-sil':
+                    contentUrl = '../pages/form_delete_announcement.php';
+                    break;
+                case 'duyuru-guncelle':
+                    contentUrl = '../pages/form_update_announcement.php';
+                    break;
+                case 'rol-bazli-yetkilendirme':
+                    contentUrl = '../pages/form_role_based_auth.php';
+                    break;
+                case 'kullanici-bazli-yetkilendirme':
+                    contentUrl = '../pages/form_user_based_auth.php';
+                    break;
+                default:
+                    contentArea.innerHTML = '<p>Henüz içerik mevcut değil.</p>';
+                    return;
+            }
+
+            fetch(contentUrl)
+                .then(response => response.text())
+                .then(html => {
+                    contentArea.innerHTML = html;
+                    setupFormSubmitListener();
+                })
+                .catch(error => {
+                    contentArea.innerHTML = `<p>İçerik yüklenirken bir hata oluştu: ${error.message}</p>`;
+                });
+        }
+
+        function setupFormSubmitListener() {
+            const teacherForm = document.querySelector('.teacher-form');
+
+            if (teacherForm) {
+                teacherForm.removeEventListener('submit', formSubmitHandler);
+                teacherForm.addEventListener('submit', formSubmitHandler);
+            }
+        }
+
+        function formSubmitHandler(e) {
+            e.preventDefault(); // Formun varsayılan gönderimini engelle
+
+            let formData = new FormData(this);
+
+            fetch('form_add_teacher.php', {
+                method: 'POST',
+                body: formData
+            })
+            .then(response => response.text())
+            .then(result => {
+                document.getElementById('content-area').innerHTML = result;
+                setupFormSubmitListener(); // Form yüklendikten sonra tekrar listener ekle
+            })
+            .catch(error => {
+                console.error('Hata:', error);
+            });
+        }
+
+        function animateContent(callback) {
+            const items = document.querySelectorAll('.button-grid a');
+            items.forEach((item, index) => {
+                setTimeout(() => {
+                    item.classList.add('show');
+                    if (index === items.length - 1 && typeof callback === 'function') {
+                        setTimeout(callback, 100);
+                    }
+                }, index * 100);
+            });
+        }
+
+        function reverseAnimateContent(callback) {
+            const items = document.querySelectorAll('.button-grid a.show');
+            const totalItems = items.length;
+
+            if (totalItems === 0) {
+                if (typeof callback === 'function') {
+                    callback();
+                }
+                return;
+            }
+
+            const delay = 100;
+
+            for (let i = totalItems - 1; i >= 0; i--) {
+                setTimeout(() => {
+                    items[i].classList.remove('show');
+                    items[i].style.pointerEvents = 'none';
+
+                    if (i === 0 && typeof callback === 'function') {
+                        setTimeout(callback, delay);
+                    }
+                }, (totalItems - 1 - i) * delay);
+            }
+        }
+
+        document.addEventListener('DOMContentLoaded', function() {
+            const menuButton = document.getElementById('menu-button');
+            const sidebar = document.querySelector('.sidebar');
+
+            if (menuButton && sidebar) {
+                // Menü butonuna tıklayınca sidebar'ı açıp kapat
+                menuButton.addEventListener('click', function(e) {
+                    e.stopPropagation(); // Bu tıklamanın yayılmasını durdurur
+                    sidebar.classList.toggle('open');
+                });
+
+                // Sayfanın herhangi bir yerine tıklayınca sidebar'ı kapat
+                document.addEventListener('click', function(e) {
+                    if (!sidebar.contains(e.target) && !menuButton.contains(e.target)) {
+                        sidebar.classList.remove('open');
+                    }
+                });
+            }
+
+            // Menü öğelerine tıklanınca sidebar'ı kapat
+            document.querySelectorAll('.sidebar ul.menu li a').forEach(function(menuItem) {
+                menuItem.addEventListener('click', function() {
+                    sidebar.classList.remove('open');
+                });
+            });
+        });
+    </script>
+</body>
+</html>

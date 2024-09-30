@@ -1,0 +1,165 @@
+/* Genel ayarlar */
+body, html {
+    margin: 0;
+    padding: 0;
+    font-family: Arial, sans-serif;
+    height: 100%;
+    background-color: #f0f0f0;
+}
+
+/* Container ayarları */
+/* Container için genel düzenleme */
+.container {
+    display: flex;
+    flex-direction: row;
+    justify-content: space-evenly;
+    align-items: center;
+    flex-wrap: wrap;
+    max-width: 1200px;
+    margin: 0 auto;
+    padding: 20px;
+    background-color: #e0f7ea; /* Hafif yeşil arka plan */
+    border-radius: 15px;
+    box-shadow: 0 8px 16px rgba(0, 0, 0, 0.2);
+    height: auto; /* Yüksekliği içeriğe göre ayarla */
+}
+
+/* Her bir rol için kutu düzeni */
+.role-option {
+    flex: 1 1 200px; /* Esnek genişlik ve minimum genişlik */
+    margin: 20px;
+    text-align: center;
+    background-color: #f0f0f0; /* İsteğe bağlı arka plan rengi */
+    border-radius: 50%;
+    padding: 10px;
+    box-shadow: 0 4px 8px rgba(0, 0, 0, 0.2);
+    transition: transform 0.3s ease;
+}
+
+.role-option:hover {
+    transform: scale(1.1); /* Hover sırasında büyüme efekti */
+}
+
+.role-option img {
+    width: 80%; /* Resmin container içine daha iyi sığması için boyutu artır */
+    height: auto;
+    border-radius: 50%;
+}
+
+.role-option h3 {
+    margin-top: 10px;
+    font-size: 1.2em;
+}
+
+/* Mobil cihazlar için düzenleme */
+@media (max-width: 768px) {
+    .container {
+        flex-direction: column;
+        align-items: center;
+        padding: 10px;
+    }
+
+    .role-option {
+        width: 80%; /* Mobilde tam genişlik */
+        margin: 10px 0;
+    }
+}
+
+
+/* Sol taraf (görsel) ayarları */
+.left-side {
+    width: 50%; /* Sol tarafın genişliğini ayarlayın */
+    height: 100vh; /* Sayfanın tamamını kaplaması için */
+    overflow: hidden; /* Taşan kısımları gizlemek için */
+}
+
+.login-image {
+    width: 100%;
+    height: 100%;
+    object-fit: cover; /* Resmi div'in tamamına sığdırır */
+}
+
+/* Sağ taraf (logo ve login formu) ayarları */
+.right-side {
+    flex: 1;
+    background-color: #ffffff;
+    position: relative;
+}
+
+/* Logo ayarları */
+.logo-container {
+    width: 100%;
+    text-align: center;
+    margin-top: 200px;
+}
+
+.logo-image {
+    max-width: 150px; /* Logonun maksimum genişliği */
+    height: auto;
+}
+
+/* Login form ayarları */
+.login-form-container {
+    width: 80%;
+    max-width: 400px;
+    background-color: #ffffff;
+    padding: 20px;
+    box-shadow: 0 0 15px rgba(0, 0, 0, 0.1);
+    border-radius: 8px;
+    text-align: center;
+    margin: auto; /* Ortalamak için */
+    margin-top: 150px; /* Üstten boşluk, logonun altında yer almasını sağlıyor */
+}
+
+.login-form-container h2 {
+    margin-bottom: 20px;
+    font-size: 24px;
+    color: #333;
+}
+
+.input-group {
+    margin-bottom: 15px;
+    text-align: left;
+}
+
+.input-group label {
+    display: block;
+    font-weight: bold;
+    margin-bottom: 5px;
+    color: #555;
+}
+
+.input-group input {
+    width: 100%;
+    padding: 10px;
+    font-size: 16px;
+    border: 1px solid #ccc;
+    border-radius: 4px;
+}
+
+.forgot-password {
+    text-align: right;
+    margin-bottom: 20px;
+}
+
+.forgot-password a {
+    text-decoration: none;
+    color: #0066cc;
+    font-size: 14px;
+}
+
+.login-button {
+    width: 100%;
+    padding: 12px;
+    font-size: 16px;
+    color: #ffffff;
+    background-color: #0066cc;
+    border: none;
+    border-radius: 4px;
+    cursor: pointer;
+    transition: background-color 0.3s ease;
+}
+
+.login-button:hover {
+    background-color: #005bb5;
+}

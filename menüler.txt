@@ -1,0 +1,59 @@
+Ana menüleri rakamlarla,alt menüleri de harflerle belirtecegim
+
+1)Ögretmen islemleri
+	a)Ögretmen Ekle
+	b)Ögretmen Sil
+	c)Ögretmen Güncelle
+	d)Ögretmen Listesi
+		i)  Genel
+		ii) Sinif Bazli
+	e)Ögretmen Ders Atama
+	
+2)Ögrenci islemleri
+	a)Ögrenci Ekle
+	b)Ögrenci Sil
+	c)Ögrenci Güncelle
+	d)Ögrenci Listesi
+		i) Genel
+		ii)Sinif Bazli
+	e)Ögrenci Not islemleri
+	f)Ögrenci devamsizlik
+
+3)Ders islemleri
+	a)Ders Ekle
+	b)Ders Sil
+	c)Ders Güncelle
+	d)Ders Listesi
+	
+4)Ders Programi islemleri
+	a)Ders Programi Ekle
+	b)Ders Programi Sil
+	c)Ders Programi Güncelle
+	d)Ders Programi Listesi
+		i)   Genel
+		ii)  Ögretmen Bazli
+		iii) Ögrenci Bazli
+		iv)  Sinif Bazli
+	e)Ders Programi Cakisma Kontrolü
+
+5)Sinif islemleri
+	a)Sinif Ekle
+	b)Sinif Sil
+	c)Sinif Güncelle
+	d)Sinif Ögretmeni Atama
+
+6)Veli islemleri
+	a)Veli Ekle
+	b)Veli Sil
+	c)Veli Güncelle
+
+7)Duyurular
+	a)Duyuru Ekle
+		i)Genel Duyurular
+		ii)Personel Duyurulari
+	b)Duyuru Sil
+	c)Duyuru Güncelle
+	
+8) Yetkilendirme
+	a)Rol Bazli
+	b)Kullanici Bazli
